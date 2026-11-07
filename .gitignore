@@ -1,0 +1,18 @@
+# Python / Virtual Environment
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.env
+
+# Frontend / Node
+node_modules/
+build/
+dist/
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/

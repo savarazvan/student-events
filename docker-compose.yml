@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: student_events_db
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgrespassword
+      POSTGRES_DB: student_events_db
+    ports:
+      - "5432:5432"  # Expune portul și pe host (localhost)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data # Persistență pe disk local
+
+  # 2. Application Backend FastAPI
+  backend:
+    build: ./backend
+    container_name: student_events_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      # Conexiune asincronă folosind driverul asyncpg către serviciul 'db'
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgrespassword@db:5432/student_events_db
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
