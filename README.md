@@ -316,10 +316,221 @@ Common errors:
 | `404 Not Found` | User does not exist |
 | `422 Unprocessable Entity` | Invalid UUID or global role/body |
 
-## 4. Frontend Integration Notes
+## 4. Event Endpoints (`/api/v1/events`)
+
+| Method & path | Description | Required role | Success |
+|---|---|---|---|
+| `GET /api/v1/events` | List events, optionally filtered by organization and status | Public; non-published visibility is restricted | `200 OK` |
+| `POST /api/v1/events` | Create an event in an organization | `SUPER_ADMIN` or organization `ORG_ADMIN`/`ORGANIZER` | `201 Created` |
+| `GET /api/v1/events/{event_id}` | Get an event by UUID | Public | `200 OK` |
+| `PUT /api/v1/events/{event_id}` | Update event details | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+| `PATCH /api/v1/events/{event_id}/status` | Change event status | `SUPER_ADMIN` or event organization `ORG_ADMIN` | `200 OK` |
+| `POST /api/v1/events/{event_id}/register` | Register or join the waitlist | Authenticated | `201 Created` |
+| `DELETE /api/v1/events/{event_id}/register` | Cancel registration and promote the next waitlisted user | Authenticated | `200 OK` |
+| `GET /api/v1/events/{event_id}/attendees` | List non-cancelled registrants | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+
+Protected endpoints require `Authorization: Bearer <access_token>`. Requests
+with a JSON body use `Content-Type: application/json`.
+
+### `GET /api/v1/events`
+
+Optional query parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `organization_id` | UUID | Restrict results to one organization |
+| `status` | `DRAFT`, `PUBLISHED`, `CANCELLED` | Restrict results to a status when the caller can view that status |
+| `search` | string | Case-insensitive substring search in title or description |
+| `page` | integer, default `1` | 1-based page number |
+| `size` | integer, default `20`, range `1`–`100` | Number of results per page |
+
+Unauthenticated and regular users only receive `PUBLISHED` events, even when
+requesting another status. A super admin may view any status. An organization
+admin or organizer may view all statuses for their organization when they
+provide its `organization_id`.
+
+Example:
+
+```http
+GET /api/v1/events?organization_id=d44af106-f11e-40e0-8d70-09f38e73eaa8&status=PUBLISHED
+```
+
+Success response (`200 OK`) is an object containing pagination metadata and an
+`items` array of event objects:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "page": 1,
+  "size": 20
+}
+```
+
+### `POST /api/v1/events`
+
+Creates an event in `DRAFT` state. The creator is taken from the access token;
+clients do not send `created_by_id` or `status`.
+
+Request body:
+
+```json
+{
+  "title": "Student Tech Meetup",
+  "description": "A meetup for student developers.",
+  "location": "UBB Main Building",
+  "start_time": "2026-12-01T10:00:00Z",
+  "end_time": "2026-12-01T12:00:00Z",
+  "capacity": 100,
+  "organization_id": "d44af106-f11e-40e0-8d70-09f38e73eaa8",
+  "image_url": "https://cdn.example.com/posters/tech-meetup.webp"
+}
+```
+
+`description` and `image_url` are optional; either may be `null`. Image URLs
+must be absolute HTTP(S) URLs ending in `.png`, `.jpg`, `.jpeg`, or `.webp`.
+Base64 data images are limited to 5 MB and must match their declared image
+type and file signature. The reusable direct-upload validator also checks
+extension, MIME type, file signature, and the 5 MB limit; there is not
+currently a multipart upload endpoint. The API does not download remote URLs
+to inspect their content or size.
+
+Success response (`201 Created`):
+
+```json
+{
+  "id": "ec34db1a-957d-4c36-937a-a1e899df8951",
+  "title": "Student Tech Meetup",
+  "description": "A meetup for student developers.",
+  "location": "UBB Main Building",
+  "start_time": "2026-12-01T10:00:00Z",
+  "end_time": "2026-12-01T12:00:00Z",
+  "capacity": 100,
+  "status": "DRAFT",
+  "organization_id": "d44af106-f11e-40e0-8d70-09f38e73eaa8",
+  "created_by_id": "8e4ba76e-55c8-4f5b-86a6-0669d128a442",
+  "created_at": "2026-11-08T15:00:00Z",
+  "image_url": "https://cdn.example.com/posters/tech-meetup.webp"
+}
+```
+
+Common errors: `400` invalid image URL/data; `401` missing/invalid token;
+`403` insufficient organization role; `404` organization not found; `422`
+invalid event body.
+
+### `GET /api/v1/events/{event_id}`
+
+Replace `{event_id}` with the event UUID. No body is required. Returns an
+event object using the response shape above.
+
+Common errors: `404` event not found; `422` malformed UUID.
+
+### `PUT /api/v1/events/{event_id}`
+
+Updates event details. Send one or more fields from the event create schema;
+omitted fields remain unchanged. `description` can be set to `null`.
+
+Example request body:
+
+```json
+{
+  "title": "Student Tech Meetup - Updated",
+  "description": null,
+  "capacity": 120,
+  "image_url": null
+}
+```
+
+Success response: `200 OK` with the full updated event object.
+
+Common errors: `401` missing/invalid token; `403` insufficient organization
+role; `400` unsupported image URL; `404` event not found; `422` invalid fields
+or end time not after start time.
+
+### `PATCH /api/v1/events/{event_id}/status`
+
+Only an organization admin or super admin can change an event's status;
+organizers can edit event details but cannot publish or cancel events.
+
+Request body:
+
+```json
+{
+  "status": "PUBLISHED"
+}
+```
+
+Allowed status values are `DRAFT`, `PUBLISHED`, and `CANCELLED`.
+
+Success response: `200 OK` with the full event object and updated status.
+
+Common errors: `401` missing/invalid token; `403` insufficient organization
+role; `404` event not found; `422` invalid status.
+
+### `POST /api/v1/events/{event_id}/register`
+
+Requires a valid access token for the registering user. No body is required.
+Registrations are unique per event and user. If the event has fewer confirmed
+registrations than its capacity, the registration is `CONFIRMED`; otherwise
+the user joins the `WAITLIST`.
+
+Success response (`201 Created`):
+
+```json
+{
+  "id": "56dc31cd-0c54-4381-a938-29a1bd16bdfe",
+  "event_id": "ec34db1a-957d-4c36-937a-a1e899df8951",
+  "user_id": "8e4ba76e-55c8-4f5b-86a6-0669d128a442",
+  "status": "WAITLIST",
+  "registered_at": "2026-11-08T15:00:00Z"
+}
+```
+
+Repeating a registration that is already active returns the existing
+registration. A cancelled registration can be reactivated and is assigned a
+confirmed or waitlist status based on available capacity.
+
+Common errors: `401` missing/invalid token; `404` event not found.
+
+### `DELETE /api/v1/events/{event_id}/register`
+
+Cancels the current user's registration. When a confirmed user cancels, the
+oldest waitlisted registration is promoted to `CONFIRMED`. No body is required.
+
+Success response (`200 OK`) returns the cancelling user's registration with
+`"status": "CANCELLED"`.
+
+Common errors: `401` missing/invalid token; `404` event or registration not
+found.
+
+### `GET /api/v1/events/{event_id}/attendees`
+
+Requires super-admin or organizer/admin membership in the event's
+organization. No body is required. Returns confirmed and waitlisted users;
+cancelled registrations are excluded.
+
+Success response (`200 OK`):
+
+```json
+[
+  {
+    "user_id": "8e4ba76e-55c8-4f5b-86a6-0669d128a442",
+    "full_name": "Ion Popescu",
+    "email": "student@ubbcluj.ro",
+    "registered_at": "2026-11-08T15:00:00Z",
+    "status": "CONFIRMED"
+  }
+]
+```
+
+Common errors: `401` missing/invalid token; `403` insufficient organization
+role; `404` event not found.
+
+## 5. Frontend Integration Notes
 
 - Send `Content-Type: application/json` with every JSON request.
-- Send the Bearer token on `/api/v1/auth/me` and all `/api/v1/admin` requests.
+- Send the Bearer token on `/api/v1/auth/me`, all `/api/v1/admin` requests,
+  and protected event mutations.
 - Use the role strings exactly as listed in the request examples. The
   organization admin role's API enum value is `ORG_ADMIN` (`ADMIN` is a
   Python-side alias).
