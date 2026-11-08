@@ -24,6 +24,7 @@ AsyncSessionLocal = async_sessionmaker(
     autocommit=False,
     autoflush=False
 )
+async_session_maker = AsyncSessionLocal
 
 # Clasa Base din care vor moșteni toate modelele din app/models/
 class Base(DeclarativeBase):

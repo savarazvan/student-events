@@ -1,9 +1,13 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
+from app.api.v1.admin import router as admin_router
+from app.api.v1.auth import router as auth_router
 from app.core.database import get_db, engine, Base
 
 app = FastAPI(title="UBB Student Events API")
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1/admin")
 
 @app.on_event("startup")
 async def startup_event():
