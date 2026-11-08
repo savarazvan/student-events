@@ -14,16 +14,19 @@ from app.models.models import GlobalRole, Organization, OrganizationMember, OrgR
 bearer_scheme = HTTPBearer(auto_error=False)
 
 
-async def get_current_user(
+async def get_optional_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: AsyncSession = Depends(get_db),
-) -> User:
+) -> User | None:
+    if credentials is None:
+        return None
+
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or missing authentication credentials.",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    if credentials is None or credentials.scheme.lower() != "bearer":
+    if credentials.scheme.lower() != "bearer":
         raise unauthorized
 
     try:
@@ -37,6 +40,18 @@ async def get_current_user(
     if user is None or not user.is_active:
         raise unauthorized
     return user
+
+
+def get_current_user(
+    current_user: User | None = Depends(get_optional_current_user),
+) -> User:
+    if current_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing authentication credentials.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return current_user
 
 
 def require_global_role(role: GlobalRole):

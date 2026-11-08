@@ -4,12 +4,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, Uuid, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, Uuid, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 
 _DELETE_ORPHAN_CASCADE = "all, delete-orphan"
+_USER_FOREIGN_KEY = "users.id"
 
 
 class GlobalRole(str, Enum):
@@ -26,9 +27,13 @@ class OrgRole(str, Enum):
 
 class EventStatus(str, Enum):
     DRAFT = "DRAFT"
-    SUBMITTED = "SUBMITTED"
     PUBLISHED = "PUBLISHED"
-    COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
+
+
+class EventRegistrationStatus(str, Enum):
+    CONFIRMED = "CONFIRMED"
+    WAITLIST = "WAITLIST"
     CANCELLED = "CANCELLED"
 
 
@@ -52,7 +57,7 @@ class User(Base):
     organization_memberships: Mapped[list[OrganizationMember]] = relationship(
         back_populates="user", cascade=_DELETE_ORPHAN_CASCADE
     )
-    registrations: Mapped[list[Registration]] = relationship(
+    registrations: Mapped[list[EventRegistration]] = relationship(
         back_populates="user", cascade=_DELETE_ORPHAN_CASCADE
     )
 
@@ -79,7 +84,7 @@ class OrganizationMember(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), nullable=False)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False)
     role_in_org: Mapped[OrgRole] = mapped_column(
         SqlEnum(OrgRole, name="org_role"), default=OrgRole.ORGANIZER, nullable=False
@@ -93,33 +98,49 @@ class Event(Base):
     __tablename__ = "events"
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    title: Mapped[str] = mapped_column(String, nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    category: Mapped[str] = mapped_column(String, nullable=False)
-    capacity: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(String, index=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     location: Mapped[str] = mapped_column(String, nullable=False)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    end_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[EventStatus] = mapped_column(
         SqlEnum(EventStatus, name="event_status"), default=EventStatus.DRAFT, nullable=False
     )
-    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id"), nullable=False)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    image_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
     organization: Mapped[Organization] = relationship(back_populates="events")
-    registrations: Mapped[list[Registration]] = relationship(
+    created_by: Mapped[User] = relationship()
+    registrations: Mapped[list[EventRegistration]] = relationship(
         back_populates="event", cascade=_DELETE_ORPHAN_CASCADE
     )
 
 
-class Registration(Base):
+class EventRegistration(Base):
     __tablename__ = "registrations"
-    __table_args__ = (UniqueConstraint("user_id", "event_id", name="uq_registrations_user_event"),)
+    __table_args__ = (
+        UniqueConstraint("event_id", "user_id", name="uq_registrations_event_user"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False)
-    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id"), nullable=False)
-    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
-    status: Mapped[str] = mapped_column(String, default="CONFIRMED", nullable=False)
-    qr_code_token: Mapped[str] = mapped_column(String, nullable=False)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), index=True, nullable=False)
+    status: Mapped[EventRegistrationStatus] = mapped_column(
+        SqlEnum(EventRegistrationStatus, name="event_registration_status"),
+        default=EventRegistrationStatus.CONFIRMED,
+        nullable=False,
+    )
+    registered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now(), nullable=False
+    )
 
     user: Mapped[User] = relationship(back_populates="registrations")
     event: Mapped[Event] = relationship(back_populates="registrations")
+
+
+Registration = EventRegistration
