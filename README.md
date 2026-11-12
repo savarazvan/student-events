@@ -1,3 +1,72 @@
+# UBB Student Events
+
+FastAPI + PostgreSQL backend for managing events of UBB student organizations.
+The API reference for frontend developers is further below in this file.
+
+## Running the project
+
+### Option A — Docker (recommended)
+
+Requirements: Docker Desktop.
+
+```sh
+cp .env.example .env        # Windows: copy .env.example .env
+docker compose up --build
+```
+
+This starts PostgreSQL, applies the database migrations, seeds the initial data and starts
+the API with auto-reload (the `backend/` folder is mounted into the container,
+so code changes are picked up immediately).
+
+- API: http://localhost:8000
+- Interactive docs (Swagger): http://localhost:8000/docs
+- DB health check: http://localhost:8000/health/db
+
+Seeded super-admin account: `admin@ubbcluj.ro` / `Admin123456!`
+(member of the `OSUBB` and `BEST Cluj-Napoca` organizations).
+
+Stop with `Ctrl+C`; `docker compose down -v` also wipes the database.
+
+### Option B — Local Python (no Docker for the API)
+
+Requirements: **Python 3.12+** and a running PostgreSQL (for example only the
+database container: `docker compose up -d db`).
+
+```sh
+cp .env.example .env        # set DATABASE_URL to your PostgreSQL (localhost:5432 by default)
+cd backend
+python -m venv .venv
+# Windows:  .venv\Scripts\activate      macOS/Linux:  source .venv/bin/activate
+pip install -r requirements.txt
+python -m app.seed          # applies migrations + initial data (safe to re-run)
+uvicorn app.main:app --reload
+```
+
+The backend reads the `.env` file from the repository root automatically.
+
+### Running the tests
+
+The tests use an in-memory SQLite database, so no PostgreSQL is needed:
+
+```sh
+cd backend
+pytest
+```
+
+### Configuration (`.env`)
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Database credentials used by Docker | `postgres` / `postgrespassword` / `student_events_db` |
+| `SECRET_KEY` | JWT signing key — **set a long random value** | dev-only value in Docker |
+| `DATABASE_URL` | Only for running the API outside Docker | `postgresql+asyncpg://postgres:postgrespassword@localhost:5432/student_events_db` |
+| `CORS_ORIGINS` | Comma-separated frontend origins | `http://localhost:3000,http://localhost:5173` |
+| `SQL_ECHO` | Log every SQL query | `false` |
+| `TICKET_SECRET` | Key that signs QR ticket tokens (changing it invalidates issued QR codes) | derived from `SECRET_KEY` |
+| `CHECKIN_OPENS_MINUTES_BEFORE` | How early before the start organizers can scan tickets | `60` |
+
+---
+
 # UBB Student Events - Frontend API Integration Guide
 
 This guide documents the authentication and super-admin endpoints currently
@@ -320,14 +389,21 @@ Common errors:
 
 | Method & path | Description | Required role | Success |
 |---|---|---|---|
-| `GET /api/v1/events` | List events, optionally filtered by organization and status | Public; non-published visibility is restricted | `200 OK` |
+| `GET /api/v1/events` | List events, filtered by organization, status, category, date range or keyword | Public; non-published visibility is restricted | `200 OK` |
 | `POST /api/v1/events` | Create an event in an organization | `SUPER_ADMIN` or organization `ORG_ADMIN`/`ORGANIZER` | `201 Created` |
-| `GET /api/v1/events/{event_id}` | Get an event by UUID | Public | `200 OK` |
+| `GET /api/v1/events/{event_id}` | Get an event by UUID | Public (`DRAFT`/`SUBMITTED` only for the organization's managers) | `200 OK` |
 | `PUT /api/v1/events/{event_id}` | Update event details | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
-| `PATCH /api/v1/events/{event_id}/status` | Change event status | `SUPER_ADMIN` or event organization `ORG_ADMIN` | `200 OK` |
-| `POST /api/v1/events/{event_id}/register` | Register or join the waitlist | Authenticated | `201 Created` |
-| `DELETE /api/v1/events/{event_id}/register` | Cancel registration and promote the next waitlisted user | Authenticated | `200 OK` |
-| `GET /api/v1/events/{event_id}/attendees` | List non-cancelled registrants | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+| `PATCH /api/v1/events/{event_id}/status` | Move the event through its lifecycle | Depends on the transition (see below) | `200 OK` |
+| `GET /api/v1/events/{event_id}/register` | The current user's registration for this event | Authenticated | `200 OK` |
+| `POST /api/v1/events/{event_id}/register` | Register (and receive a ticket) or join the waitlist | Authenticated | `201 Created` |
+| `DELETE /api/v1/events/{event_id}/register` | Cancel registration, revoke the ticket, promote the next waitlisted user | Authenticated | `200 OK` |
+| `GET /api/v1/events/{event_id}/attendees` | List non-cancelled registrants with check-in time | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+| `POST /api/v1/events/{event_id}/check-in` | Check in a scanned QR ticket | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+| `POST /api/v1/events/{event_id}/check-in/manual` | Check in an attendee by user id (QR fallback) | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+| `DELETE /api/v1/events/{event_id}/check-in/{ticket_id}` | Undo a mistaken check-in | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `204 No Content` |
+| `GET /api/v1/events/{event_id}/attendance` | Attendance statistics | `SUPER_ADMIN` or event organization `ORG_ADMIN`/`ORGANIZER` | `200 OK` |
+
+The student's own schedule and tickets are under `/api/v1/me` (section 5).
 
 Protected endpoints require `Authorization: Bearer <access_token>`. Requests
 with a JSON body use `Content-Type: application/json`.
@@ -339,13 +415,16 @@ Optional query parameters:
 | Parameter | Type | Description |
 |---|---|---|
 | `organization_id` | UUID | Restrict results to one organization |
-| `status` | `DRAFT`, `PUBLISHED`, `CANCELLED` | Restrict results to a status when the caller can view that status |
+| `status` | `DRAFT`, `SUBMITTED`, `PUBLISHED`, `IN_PROGRESS`, `COMPLETED`, `CANCELLED` | Restrict results to a status when the caller can view that status |
+| `category` | `WORKSHOP`, `CONFERENCE`, `TRAINING`, `SOCIAL`, `VOLUNTEERING`, `COMPETITION`, `OTHER` | Restrict results to one category |
+| `starts_after` | ISO 8601 datetime | Events starting at or after this moment |
+| `starts_before` | ISO 8601 datetime | Events starting before this moment |
 | `search` | string | Case-insensitive substring search in title or description |
 | `page` | integer, default `1` | 1-based page number |
 | `size` | integer, default `20`, range `1`–`100` | Number of results per page |
 
-Unauthenticated and regular users only receive `PUBLISHED` events, even when
-requesting another status. A super admin may view any status. An organization
+Unauthenticated and regular users only receive `PUBLISHED` and `IN_PROGRESS`
+events, even when requesting another status. A super admin may view any status. An organization
 admin or organizer may view all statuses for their organization when they
 provide its `organization_id`.
 
@@ -383,11 +462,15 @@ Request body:
   "end_time": "2026-12-01T12:00:00Z",
   "capacity": 100,
   "organization_id": "d44af106-f11e-40e0-8d70-09f38e73eaa8",
-  "image_url": "https://cdn.example.com/posters/tech-meetup.webp"
+  "image_url": "https://cdn.example.com/posters/tech-meetup.webp",
+  "category": "WORKSHOP",
+  "registration_deadline": "2026-11-30T22:00:00Z"
 }
 ```
 
-`description` and `image_url` are optional; either may be `null`. Image URLs
+`category` defaults to `OTHER`. `registration_deadline` is optional and must
+not be after `start_time`; when it is `null`, registration closes when the
+event starts. `description` and `image_url` are optional; either may be `null`. Image URLs
 must be absolute HTTP(S) URLs ending in `.png`, `.jpg`, `.jpeg`, or `.webp`.
 Base64 data images are limited to 5 MB and must match their declared image
 type and file signature. The reusable direct-upload validator also checks
@@ -410,7 +493,9 @@ Success response (`201 Created`):
   "organization_id": "d44af106-f11e-40e0-8d70-09f38e73eaa8",
   "created_by_id": "8e4ba76e-55c8-4f5b-86a6-0669d128a442",
   "created_at": "2026-11-08T15:00:00Z",
-  "image_url": "https://cdn.example.com/posters/tech-meetup.webp"
+  "image_url": "https://cdn.example.com/posters/tech-meetup.webp",
+  "category": "WORKSHOP",
+  "registration_deadline": "2026-11-30T22:00:00Z"
 }
 ```
 
@@ -422,6 +507,9 @@ invalid event body.
 
 Replace `{event_id}` with the event UUID. No body is required. Returns an
 event object using the response shape above.
+
+`DRAFT` and `SUBMITTED` events are only returned to the organization's
+admins/organizers (and super admins); everyone else gets `404`.
 
 Common errors: `404` event not found; `422` malformed UUID.
 
@@ -441,16 +529,41 @@ Example request body:
 }
 ```
 
+Raising `capacity` on a published event immediately promotes waitlisted
+students (oldest first) and issues their tickets. Lowering it below the number
+of confirmed registrations is refused. `COMPLETED` and `CANCELLED` events can
+no longer be edited.
+
 Success response: `200 OK` with the full updated event object.
 
 Common errors: `401` missing/invalid token; `403` insufficient organization
-role; `400` unsupported image URL; `404` event not found; `422` invalid fields
-or end time not after start time.
+role; `400` unsupported image URL; `404` event not found; `409` event is
+completed/cancelled or capacity below confirmed registrations; `422` invalid
+fields, end time not after start time, or deadline after start time.
 
 ### `PATCH /api/v1/events/{event_id}/status`
 
-Only an organization admin or super admin can change an event's status;
-organizers can edit event details but cannot publish or cancel events.
+Events follow a fixed lifecycle:
+
+```
+DRAFT ──▶ SUBMITTED ──▶ PUBLISHED ──▶ IN_PROGRESS ──▶ COMPLETED
+  │  ◀──────┘  │            │              │
+  └────────────┴────────────┴──────────────┴──▶ CANCELLED
+```
+
+| From | Allowed targets | Who |
+|---|---|---|
+| `DRAFT` | `SUBMITTED` | Organizer or org admin |
+| `DRAFT` | `PUBLISHED`, `CANCELLED` | Org admin |
+| `SUBMITTED` | `DRAFT` (withdraw / send back) | Organizer or org admin |
+| `SUBMITTED` | `PUBLISHED`, `CANCELLED` | Org admin |
+| `PUBLISHED` | `IN_PROGRESS`, `CANCELLED` | Org admin |
+| `IN_PROGRESS` | `COMPLETED`, `CANCELLED` | Org admin |
+| `COMPLETED`, `CANCELLED` | — (final) | — |
+
+Super admins may perform every allowed transition. Setting the current status
+again is a no-op. Cancelling an event revokes every ticket issued for it. An
+event that has already ended cannot be published.
 
 Request body:
 
@@ -460,19 +573,22 @@ Request body:
 }
 ```
 
-Allowed status values are `DRAFT`, `PUBLISHED`, and `CANCELLED`.
-
 Success response: `200 OK` with the full event object and updated status.
 
-Common errors: `401` missing/invalid token; `403` insufficient organization
-role; `404` event not found; `422` invalid status.
+Common errors: `401` missing/invalid token; `403` role not allowed for this
+transition; `404` event not found; `409` transition not allowed; `422` invalid
+status.
 
 ### `POST /api/v1/events/{event_id}/register`
 
 Requires a valid access token for the registering user. No body is required.
-Registrations are unique per event and user. If the event has fewer confirmed
-registrations than its capacity, the registration is `CONFIRMED`; otherwise
-the user joins the `WAITLIST`.
+Registrations are unique per event and user. Registration is only possible
+while the event is `PUBLISHED` and before its `registration_deadline` (or its
+start time when there is no deadline). If the event has fewer confirmed
+registrations than its capacity, the registration is `CONFIRMED` and a ticket
+is issued (`ticket_id`); otherwise the user joins the `WAITLIST` and gets a
+ticket when promoted. The event row is locked during the capacity check
+(`SELECT ... FOR UPDATE`), so concurrent sign-ups can never overbook.
 
 Success response (`201 Created`):
 
@@ -482,20 +598,28 @@ Success response (`201 Created`):
   "event_id": "ec34db1a-957d-4c36-937a-a1e899df8951",
   "user_id": "8e4ba76e-55c8-4f5b-86a6-0669d128a442",
   "status": "WAITLIST",
-  "registered_at": "2026-11-08T15:00:00Z"
+  "registered_at": "2026-11-08T15:00:00Z",
+  "ticket_id": null
 }
 ```
+
+`GET /api/v1/events/{event_id}/register` returns the same object for the
+current user (useful to render the button state), or `404` when the user is
+not registered.
 
 Repeating a registration that is already active returns the existing
 registration. A cancelled registration can be reactivated and is assigned a
 confirmed or waitlist status based on available capacity.
 
-Common errors: `401` missing/invalid token; `404` event not found.
+Common errors: `401` missing/invalid token; `404` event not found; `409`
+event not published or registration closed.
 
 ### `DELETE /api/v1/events/{event_id}/register`
 
-Cancels the current user's registration. When a confirmed user cancels, the
-oldest waitlisted registration is promoted to `CONFIRMED`. No body is required.
+Cancels the current user's registration and revokes their ticket. When a
+confirmed user cancels, the oldest waitlisted registration is promoted to
+`CONFIRMED` and receives a ticket. A user who has already checked in, or whose
+event is `COMPLETED`, cannot cancel (`409`). No body is required.
 
 Success response (`200 OK`) returns the cancelling user's registration with
 `"status": "CANCELLED"`.
@@ -518,7 +642,9 @@ Success response (`200 OK`):
     "full_name": "Ion Popescu",
     "email": "student@ubbcluj.ro",
     "registered_at": "2026-11-08T15:00:00Z",
-    "status": "CONFIRMED"
+    "status": "CONFIRMED",
+    "ticket_id": "0b5e2a6e-3c1d-4f7e-9a51-2f6a1c0e8d11",
+    "checked_in_at": null
   }
 ]
 ```
@@ -526,7 +652,120 @@ Success response (`200 OK`):
 Common errors: `401` missing/invalid token; `403` insufficient organization
 role; `404` event not found.
 
-## 5. Frontend Integration Notes
+### `POST /api/v1/events/{event_id}/check-in`
+
+Used by the organizer's scanner. Send the text decoded from the attendee's QR
+code:
+
+```json
+{ "token": "<qr_token>" }
+```
+
+The token is signed by the server, so forged or altered codes are rejected.
+Check-in is possible while the event is `PUBLISHED` or `IN_PROGRESS`, from
+`CHECKIN_OPENS_MINUTES_BEFORE` minutes (default 60) before the start until the
+end time. Each ticket can be checked in once; simultaneous scans of the same
+ticket are serialized by a row lock.
+
+Success response (`200 OK`) — show the name to the person at the door:
+
+```json
+{
+  "ticket_id": "0b5e2a6e-3c1d-4f7e-9a51-2f6a1c0e8d11",
+  "user_id": "8e4ba76e-55c8-4f5b-86a6-0669d128a442",
+  "full_name": "Ion Popescu",
+  "email": "student@ubbcluj.ro",
+  "checked_in_at": "2026-12-01T09:52:10Z",
+  "checked_in_by_id": "81be345b-35c2-4796-ba80-de8b7f0612c0"
+}
+```
+
+| Status | Meaning (`detail` text is safe to display) |
+|---|---|
+| `400` | Invalid/forged ticket, ticket for a different event, or ticket revoked |
+| `403` | Caller is not an admin/organizer of the event's organization |
+| `409` | Ticket already checked in (includes the time), check-in not open yet / closed, or event not in a check-in state |
+
+`POST /api/v1/events/{event_id}/check-in/manual` with `{ "user_id": "<uuid>" }`
+checks in a confirmed attendee without a QR code (same response and rules;
+`404` when the user has no valid ticket). `DELETE
+/api/v1/events/{event_id}/check-in/{ticket_id}` reverts a mistaken check-in
+(`204`).
+
+### `GET /api/v1/events/{event_id}/attendance`
+
+Attendance statistics for admins/organizers of the event's organization:
+
+```json
+{
+  "event_id": "ec34db1a-957d-4c36-937a-a1e899df8951",
+  "capacity": 100,
+  "confirmed": 80,
+  "waitlisted": 12,
+  "cancelled": 5,
+  "checked_in": 64,
+  "not_checked_in": 16,
+  "attendance_rate": 0.8,
+  "spots_left": 20
+}
+```
+
+## 5. My Schedule & Tickets (`/api/v1/me`)
+
+All endpoints require the student's access token.
+
+| Method & path | Description | Success |
+|---|---|---|
+| `GET /api/v1/me/registrations` | The student's registrations with event summary and ticket state | `200 OK` |
+| `GET /api/v1/me/tickets/{ticket_id}` | Ticket details including the QR token | `200 OK` |
+| `GET /api/v1/me/tickets/{ticket_id}/qr.svg` | Ready-made QR code image (`image/svg+xml`) | `200 OK` |
+
+### `GET /api/v1/me/registrations`
+
+Query parameters: `upcoming` (boolean, default `false`) — only events that have
+not ended; `include_cancelled` (boolean, default `false`). Ordered by start
+time.
+
+```json
+[
+  {
+    "id": "56dc31cd-0c54-4381-a938-29a1bd16bdfe",
+    "status": "CONFIRMED",
+    "registered_at": "2026-11-08T15:00:00Z",
+    "ticket_id": "0b5e2a6e-3c1d-4f7e-9a51-2f6a1c0e8d11",
+    "ticket_state": "VALID",
+    "checked_in_at": null,
+    "event": {
+      "id": "ec34db1a-957d-4c36-937a-a1e899df8951",
+      "title": "Student Tech Meetup",
+      "location": "UBB Main Building",
+      "start_time": "2026-12-01T10:00:00Z",
+      "end_time": "2026-12-01T12:00:00Z",
+      "status": "PUBLISHED",
+      "category": "WORKSHOP",
+      "organization_id": "d44af106-f11e-40e0-8d70-09f38e73eaa8"
+    }
+  }
+]
+```
+
+`ticket_state` is `VALID`, `USED` (checked in) or `REVOKED`; it is `null` for
+waitlisted registrations, which have no ticket yet.
+
+### `GET /api/v1/me/tickets/{ticket_id}`
+
+Returns `id`, `registration_id`, `state`, `issued_at`, `checked_in_at`, the
+`event` summary and `qr_token`. Encode `qr_token` in a QR code (or simply use
+`qr.svg` below). `qr_token` is `null` once the ticket is revoked. Another
+user's ticket returns `404`.
+
+### `GET /api/v1/me/tickets/{ticket_id}/qr.svg`
+
+Returns the QR code as an SVG image (`410 Gone` when the ticket is revoked).
+Because it needs the `Authorization` header, fetch it with your HTTP client and
+display it via a blob/object URL rather than a plain `<img src>`.
+
+## 6. Frontend Integration Notes
 
 - Send `Content-Type: application/json` with every JSON request.
 - Send the Bearer token on `/api/v1/auth/me`, all `/api/v1/admin` requests,

@@ -9,7 +9,8 @@ if __package__ in (None, ""):
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import async_session_maker
+from app.core.database import async_session_maker, engine
+from app.core.migrations import run_migrations
 from app.core.security import get_password_hash
 from app.models.models import (
     GlobalRole,
@@ -86,7 +87,13 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    asyncio.run(seed_data())
+    run_migrations()
+
+    async def run() -> None:
+        await seed_data()
+        await engine.dispose()
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

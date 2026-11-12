@@ -16,3 +16,6 @@ dist/
 # IDEs
 .vscode/
 .idea/
+
+# Project documents
+docs/

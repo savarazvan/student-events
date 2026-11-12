@@ -1,7 +1,12 @@
 import os
+
+from dotenv import load_dotenv
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+
+# Încarcă variabilele din fișierul .env (rulare locală fără Docker)
+load_dotenv()
 
 # Preia URL-ul din variabilele de mediu (Docker) sau folosește localhost pentru rulare locală fără Docker
 DATABASE_URL = os.getenv(
@@ -12,7 +17,7 @@ DATABASE_URL = os.getenv(
 # Creează Engine-ul asincron SQLAlchemy
 engine = create_async_engine(
     DATABASE_URL, 
-    echo=True,       # Afișează query-urile SQL în consolă (util pentru dev)
+    echo=os.getenv("SQL_ECHO", "false").lower() == "true",  # Afișează query-urile SQL în consolă
     future=True
 )
 
