@@ -28,6 +28,10 @@ class TicketResponse(BaseModel):
     qr_token: str | None = Field(
         description="Only present while the ticket is valid or used; null when revoked."
     )
+    qr_url: str | None = Field(
+        default=None,
+        description="Value encoded in the QR code: the ticket-check page URL with the token.",
+    )
     event: TicketEventSummary
 
 
@@ -68,3 +72,17 @@ class AttendanceStatsResponse(BaseModel):
     not_checked_in: int
     attendance_rate: float = Field(description="checked_in / confirmed, 0 when nobody is confirmed")
     spots_left: int
+
+
+class TicketVerificationResponse(BaseModel):
+    """What anyone scanning a ticket QR code sees; personal data only for organizers."""
+
+    ticket_id: UUID
+    state: TicketState
+    event: TicketEventSummary
+    checked_in_at: datetime | None
+    attendee_name: str | None = Field(
+        description="Only for the ticket holder and the event's organizers."
+    )
+    can_check_in: bool = Field(description="The caller may check this ticket in right now.")
+    check_in_unavailable_reason: str | None = None

@@ -93,6 +93,7 @@ class EventRegistrationResponse(BaseModel):
     status: EventRegistrationStatus
     registered_at: datetime
     ticket_id: UUID | None = None
+    checked_in_at: datetime | None = None
 
 
 class AttendeeResponse(BaseModel):

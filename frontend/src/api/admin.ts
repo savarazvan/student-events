@@ -39,3 +39,9 @@ export function updateGlobalRole(
     data,
   );
 }
+
+export function searchUsers(search: string, limit = 10): Promise<AdminUserResponse[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (search.trim()) params.set('search', search.trim());
+  return request<AdminUserResponse[]>('GET', `/admin/users?${params.toString()}`);
+}

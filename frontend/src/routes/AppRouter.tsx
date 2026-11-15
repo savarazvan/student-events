@@ -10,7 +10,10 @@ import EventListPage from '../pages/EventListPage';
 import HomePage from '../pages/HomePage';
 import LoginPage from '../pages/LoginPage';
 import MySchedulePage from '../pages/MySchedulePage';
+import NotificationsPage from '../pages/NotificationsPage';
+import OrganizationManagePage from '../pages/OrganizationManagePage';
 import RegisterPage from '../pages/RegisterPage';
+import TicketCheckPage from '../pages/TicketCheckPage';
 import TicketPage from '../pages/TicketPage';
 
 export default function AppRouter() {
@@ -24,10 +27,13 @@ export default function AppRouter() {
           <Route path="/register" element={<RegisterPage />} />
           <Route path="/events" element={<EventListPage />} />
           <Route path="/events/:eventId" element={<EventDetailPage />} />
+          <Route path="/ticket-check" element={<TicketCheckPage />} />
 
           {/* Authenticated routes */}
           <Route element={<ProtectedRoute />}>
             <Route path="/my-schedule" element={<MySchedulePage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/organizations/:orgId/manage" element={<OrganizationManagePage />} />
             <Route path="/tickets/:ticketId" element={<TicketPage />} />
             <Route path="/events/new" element={<EventCreatePage />} />
             <Route path="/events/:eventId/edit" element={<EventEditPage />} />

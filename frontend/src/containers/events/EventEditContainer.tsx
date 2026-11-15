@@ -8,7 +8,10 @@ import LoadingBox from '../../components/common/LoadingBox';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import EventForm from '../../components/events/EventForm';
 import type { EventFormData } from '../../components/events/EventForm';
+import { ApiError } from '../../api/client';
 import { useApiError } from '../../hooks/useApiError';
+import { useFormValidation } from '../../hooks/useFormValidation';
+import { validateEventForm } from '../../utils/validation';
 import type { EventCategory } from '../../types';
 
 function toLocal(iso: string | null): string {
@@ -61,16 +64,22 @@ export default function EventEditContainer() {
     };
   }, [eventId, handleError]);
 
+  const validation = useFormValidation<keyof EventFormData>(
+    form ? validateEventForm(form, { isNew: false }) : {},
+  );
+
   const handleChange = (field: keyof EventFormData, value: string) => {
     setForm((prev) => (prev ? { ...prev, [field]: value } : prev));
+    validation.touch(field);
   };
 
   const toISO = (local: string) => (local ? new Date(local).toISOString() : '');
 
   const handleSubmit = async () => {
     if (!eventId || !form) return;
-    setLoading(true);
     clearError();
+    if (!validation.attemptSubmit()) return;
+    setLoading(true);
     try {
       await updateEvent(eventId, {
         title: form.title,
@@ -87,7 +96,13 @@ export default function EventEditContainer() {
       });
       navigate(`/events/${eventId}`);
     } catch (err) {
-      handleError(err);
+      if (err instanceof ApiError && err.status === 409 && /capacity/i.test(err.detail)) {
+        validation.setServerErrors({ capacity: err.detail });
+      } else if (err instanceof ApiError && err.status === 400 && /image/i.test(err.detail)) {
+        validation.setServerErrors({ image_url: err.detail });
+      } else if (!validation.applyServerErrors(err)) {
+        handleError(err);
+      }
     } finally {
       setLoading(false);
     }
@@ -105,6 +120,7 @@ export default function EventEditContainer() {
         data={form}
         organizations={[]}
         error={error}
+        fieldErrors={validation.errors}
         loading={loading}
         submitLabel="Save Changes"
         onChange={handleChange}

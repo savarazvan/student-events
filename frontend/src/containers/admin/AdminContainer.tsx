@@ -16,12 +16,22 @@ import ErrorAlert from '../../components/common/ErrorAlert';
 import LoadingBox from '../../components/common/LoadingBox';
 import AssignMemberForm from '../../components/admin/AssignMemberForm';
 import OrgForm from '../../components/admin/OrgForm';
+import type { OrgField } from '../../components/admin/OrgForm';
 import OrgList from '../../components/admin/OrgList';
 import UpdateGlobalRoleForm from '../../components/admin/UpdateGlobalRoleForm';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api/client';
 import { useApiError } from '../../hooks/useApiError';
+import { useFormValidation } from '../../hooks/useFormValidation';
+import { emailError, requiredText, withoutEmpty } from '../../utils/validation';
 import { useSnackbar } from '../../hooks/useSnackbar';
-import type { GlobalRole, OrgRole, OrganizationResponse } from '../../types';
+import { invalidateOrganizations } from '../../hooks/useOrganizations';
+import type {
+  AdminUserResponse,
+  GlobalRole,
+  OrgRole,
+  OrganizationResponse,
+} from '../../types';
 
 export default function AdminContainer() {
   const [tab, setTab] = useState(0);
@@ -36,15 +46,21 @@ export default function AdminContainer() {
   const [description, setDescription] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [formLoading, setFormLoading] = useState(false);
+  const orgValidation = useFormValidation<OrgField>(
+    withoutEmpty({
+      name: requiredText(name, 'Organization name'),
+      contact_email: emailError(contactEmail),
+    }),
+  );
 
   // Assign Member state
   const [assignOrgId, setAssignOrgId] = useState('');
-  const [assignUserId, setAssignUserId] = useState('');
+  const [assignUser, setAssignUser] = useState<AdminUserResponse | null>(null);
   const [assignRole, setAssignRole] = useState<OrgRole>('ORGANIZER');
   const [assignLoading, setAssignLoading] = useState(false);
 
   // Update Global Role state
-  const [roleUserId, setRoleUserId] = useState('');
+  const [roleUser, setRoleUser] = useState<AdminUserResponse | null>(null);
   const [globalRole, setGlobalRole] = useState<GlobalRole>('SUPER_ADMIN');
   const [roleLoading, setRoleLoading] = useState(false);
 
@@ -84,40 +100,47 @@ export default function AdminContainer() {
   }, [handleError]);
 
   const handleCreateOrg = async () => {
-    setFormLoading(true);
     clearError();
+    if (!orgValidation.attemptSubmit()) return;
+    setFormLoading(true);
     try {
       await createOrganization({
         name,
         description: description || undefined,
         contact_email: contactEmail,
       });
+      invalidateOrganizations();
       showSnackbar('Organization created.');
       setName('');
       setDescription('');
       setContactEmail('');
+      orgValidation.reset();
       await refreshOrgs();
     } catch (err) {
-      handleError(err);
+      if (err instanceof ApiError && err.status === 400 && /already exists/i.test(err.detail)) {
+        orgValidation.setServerErrors({ name: err.detail });
+      } else if (!orgValidation.applyServerErrors(err)) {
+        handleError(err);
+      }
     } finally {
       setFormLoading(false);
     }
   };
 
   const handleAssignMember = async () => {
-    if (!assignOrgId || !assignUserId) return;
+    if (!assignOrgId || !assignUser) return;
     setAssignLoading(true);
     clearError();
     try {
       await assignOrgMember(assignOrgId, {
-        user_id: assignUserId,
+        user_id: assignUser.id,
         role: assignRole,
       });
-      if (user?.id === assignUserId) {
+      if (user?.id === assignUser.id) {
         await refreshUser();
       }
-      showSnackbar('Member assigned successfully.');
-      setAssignUserId('');
+      showSnackbar(`${assignUser.full_name} assigned as ${assignRole}.`);
+      setAssignUser(null);
     } catch (err) {
       handleError(err);
     } finally {
@@ -126,20 +149,20 @@ export default function AdminContainer() {
   };
 
   const handleUpdateGlobalRole = async () => {
-    if (!roleUserId) return;
+    if (!roleUser) return;
     setRoleLoading(true);
     clearError();
     try {
-      const updated = await updateGlobalRole(roleUserId, {
+      const updated = await updateGlobalRole(roleUser.id, {
         global_role: globalRole,
       });
-      if (user?.id === roleUserId) {
+      if (user?.id === roleUser.id) {
         await refreshUser();
       }
       showSnackbar(
         `Updated ${updated.full_name} (${updated.email}) to ${updated.global_role}.`,
       );
-      setRoleUserId('');
+      setRoleUser(null);
     } catch (err) {
       handleError(err);
     } finally {
@@ -176,10 +199,17 @@ export default function AdminContainer() {
             description={description}
             contactEmail={contactEmail}
             error={error}
+            fieldErrors={orgValidation.errors}
             loading={formLoading}
-            onNameChange={setName}
+            onNameChange={(v) => {
+              setName(v);
+              orgValidation.touch('name');
+            }}
             onDescriptionChange={setDescription}
-            onContactEmailChange={setContactEmail}
+            onContactEmailChange={(v) => {
+              setContactEmail(v);
+              orgValidation.touch('contact_email');
+            }}
             onSubmit={handleCreateOrg}
             onClearError={clearError}
           />
@@ -191,12 +221,12 @@ export default function AdminContainer() {
           <AssignMemberForm
             organizations={organizations}
             orgId={assignOrgId}
-            userId={assignUserId}
+            selectedUser={assignUser}
             role={assignRole}
             error={error}
             loading={assignLoading}
             onOrgIdChange={setAssignOrgId}
-            onUserIdChange={setAssignUserId}
+            onUserChange={setAssignUser}
             onRoleChange={setAssignRole}
             onSubmit={handleAssignMember}
             onClearError={clearError}
@@ -207,11 +237,11 @@ export default function AdminContainer() {
       {tab === 3 && (
         <Box>
           <UpdateGlobalRoleForm
-            userId={roleUserId}
+            selectedUser={roleUser}
             globalRole={globalRole}
             error={error}
             loading={roleLoading}
-            onUserIdChange={setRoleUserId}
+            onUserChange={setRoleUser}
             onGlobalRoleChange={setGlobalRole}
             onSubmit={handleUpdateGlobalRole}
             onClearError={clearError}

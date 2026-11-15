@@ -8,7 +8,10 @@ import TextField from '@mui/material/TextField';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import type { FormEvent } from 'react';
 
+import FormHelperText from '@mui/material/FormHelperText';
+
 import type { EventCategory, OrganizationResponse } from '../../types';
+import type { FieldErrors } from '../../utils/validation';
 import ErrorAlert from '../common/ErrorAlert';
 
 const CATEGORIES: EventCategory[] = [
@@ -33,6 +36,7 @@ interface Props {
   data: EventFormData;
   organizations: OrganizationResponse[];
   error: string | null;
+  fieldErrors: FieldErrors<keyof EventFormData>;
   loading: boolean;
   submitLabel: string;
   onChange: (field: keyof EventFormData, value: string) => void;
@@ -45,6 +49,7 @@ export default function EventForm({
   data,
   organizations,
   error,
+  fieldErrors,
   loading,
   submitLabel,
   onChange,
@@ -58,7 +63,7 @@ export default function EventForm({
   };
 
   return (
-    <Box component="form" onSubmit={handleSubmit} sx={{ maxWidth: 600 }}>
+    <Box component="form" onSubmit={handleSubmit} noValidate sx={{ maxWidth: 600 }}>
       <ErrorAlert message={error} onClose={onClearError} />
       <TextField
         margin="normal"
@@ -66,6 +71,8 @@ export default function EventForm({
         fullWidth
         label="Title"
         value={data.title}
+          error={Boolean(fieldErrors.title)}
+          helperText={fieldErrors.title}
         onChange={(e) => onChange('title', e.target.value)}
       />
       <TextField
@@ -83,6 +90,8 @@ export default function EventForm({
         fullWidth
         label="Location"
         value={data.location}
+          error={Boolean(fieldErrors.location)}
+          helperText={fieldErrors.location}
         onChange={(e) => onChange('location', e.target.value)}
       />
       <Box display="flex" gap={2}>
@@ -93,6 +102,8 @@ export default function EventForm({
           label="Start Time"
           type="datetime-local"
           value={data.start_time}
+          error={Boolean(fieldErrors.start_time)}
+          helperText={fieldErrors.start_time}
           onChange={(e) => onChange('start_time', e.target.value)}
           slotProps={{ inputLabel: { shrink: true } }}
         />
@@ -103,6 +114,8 @@ export default function EventForm({
           label="End Time"
           type="datetime-local"
           value={data.end_time}
+          error={Boolean(fieldErrors.end_time)}
+          helperText={fieldErrors.end_time}
           onChange={(e) => onChange('end_time', e.target.value)}
           slotProps={{ inputLabel: { shrink: true } }}
         />
@@ -115,6 +128,8 @@ export default function EventForm({
           label="Capacity"
           type="number"
           value={data.capacity}
+          error={Boolean(fieldErrors.capacity)}
+          helperText={fieldErrors.capacity}
           onChange={(e) => onChange('capacity', e.target.value)}
           slotProps={{ htmlInput: { min: 1 } }}
         />
@@ -124,12 +139,19 @@ export default function EventForm({
           label="Registration Deadline"
           type="datetime-local"
           value={data.registration_deadline}
+          error={Boolean(fieldErrors.registration_deadline)}
+          helperText={fieldErrors.registration_deadline ?? 'Optional; defaults to the start time'}
           onChange={(e) => onChange('registration_deadline', e.target.value)}
           slotProps={{ inputLabel: { shrink: true } }}
         />
       </Box>
       {!hideOrgField && (
-        <FormControl fullWidth margin="normal" required>
+        <FormControl
+          fullWidth
+          margin="normal"
+          required
+          error={Boolean(fieldErrors.organization_id)}
+        >
           <InputLabel>Organization</InputLabel>
           <Select
             value={data.organization_id}
@@ -142,6 +164,9 @@ export default function EventForm({
               </MenuItem>
             ))}
           </Select>
+          {fieldErrors.organization_id && (
+            <FormHelperText>{fieldErrors.organization_id}</FormHelperText>
+          )}
         </FormControl>
       )}
       <FormControl fullWidth margin="normal">
@@ -164,6 +189,8 @@ export default function EventForm({
         label="Image URL"
         placeholder="https://example.com/image.jpg"
         value={data.image_url}
+          error={Boolean(fieldErrors.image_url)}
+          helperText={fieldErrors.image_url ?? 'Optional; a .png, .jpg, .jpeg or .webp link'}
         onChange={(e) => onChange('image_url', e.target.value)}
       />
       <Button

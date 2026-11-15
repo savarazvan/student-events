@@ -63,7 +63,11 @@ The tests use an in-memory SQLite database, so no PostgreSQL is needed:
 ```sh
 cd backend
 pytest
+# or, with the Docker stack running:
+docker compose exec backend pytest
 ```
+
+Frontend checks: `cd frontend && npx pnpm lint && npx pnpm build`.
 
 ### Configuration (`.env`)
 
@@ -76,6 +80,13 @@ pytest
 | `SQL_ECHO` | Log every SQL query | `false` |
 | `TICKET_SECRET` | Key that signs QR ticket tokens (changing it invalidates issued QR codes) | derived from `SECRET_KEY` |
 | `CHECKIN_OPENS_MINUTES_BEFORE` | How early before the start organizers can scan tickets | `60` |
+| `FRONTEND_URL` | Public frontend URL; ticket QR codes link to `<FRONTEND_URL>/ticket-check` | `http://localhost:5173` |
+| `BACKGROUND_JOBS_ENABLED` | Run the reminder / e-mail jobs inside the API process | `true` |
+| `JOBS_INTERVAL_SECONDS` | How often the background jobs run | `60` (`30` in Docker) |
+| `SMTP_HOST` | SMTP server for notification e-mails; **empty disables e-mail** (in-app notifications still work) | empty |
+| `SMTP_PORT` / `SMTP_STARTTLS` | SMTP port and whether to use STARTTLS | `587` / `true` |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | SMTP credentials | empty |
+| `SMTP_FROM` | Sender of notification e-mails | `UBB Student Events <no-reply@ubb-events.local>` |
 
 ---
 
@@ -120,9 +131,9 @@ browser storage).
 |---|---|---|
 | Global | `USER` | Standard authenticated account |
 | Global | `SUPER_ADMIN` | Can use every Admin endpoint |
-| Organization | `ADMIN` | Admin-level organization membership |
-| Organization | `ORGANIZER` | Organizer-level organization membership |
-| Organization | `MEMBER` | Standard organization membership |
+| Organization | `ADMIN` | Manages the organization profile and members, approves/publishes events |
+| Organization | `ORGANIZER` | Creates events, submits them for approval, runs check-in, plans the event team |
+| Organization | `MEMBER` | Sees the event team board and works on the tasks assigned to them |
 
 The current Python model defines `ADMIN` as an alias of `ORG_ADMIN`. The
 persisted/API enum value is `ORG_ADMIN`; send and expect `ORG_ADMIN` in JSON
@@ -255,6 +266,7 @@ sensitive.
 | `POST /api/v1/admin/organizations` | Create an organization | `SUPER_ADMIN` | `application/json` | `201 Created` |
 | `GET /api/v1/admin/organizations` | List all organizations | `SUPER_ADMIN` | None | `200 OK` |
 | `POST /api/v1/admin/organizations/{org_id}/members` | Create or update an organization's user membership | `SUPER_ADMIN` | `application/json` | `200 OK` |
+| `GET /api/v1/admin/users?search=&limit=` | Find accounts by name or e-mail | `SUPER_ADMIN` | None | `200 OK` |
 | `PATCH /api/v1/admin/users/{user_id}/global-role` | Change a user's global role | `SUPER_ADMIN` | `application/json` | `200 OK` |
 
 ### `POST /api/v1/admin/organizations`
@@ -771,6 +783,17 @@ Returns `id`, `registration_id`, `state`, `issued_at`, `checked_in_at`, the
 `qr.svg` below). `qr_token` is `null` once the ticket is revoked. Another
 user's ticket returns `404`.
 
+### `GET /api/v1/tickets/verify?token=`
+
+Public. The QR code encodes a link, `<FRONTEND_URL>/ticket-check?token=<qr_token>`,
+so a regular phone camera opens the ticket page instead of searching for raw
+text. The page calls this endpoint (`token` may be the bare token or the whole
+URL) and shows the ticket `state`, the event summary and, only for the ticket
+holder and the event's organizers, `attendee_name`. Organizers also get
+`can_check_in` (or `check_in_unavailable_reason`) and check the attendee in with
+one tap. `POST /events/{id}/check-in` likewise accepts the full scanned URL.
+Invalid or re-issued tickets return `400`.
+
 ### `GET /api/v1/me/tickets/{ticket_id}/qr.svg`
 
 Returns the QR code as an SVG image (`410 Gone` when the ticket is revoked).
@@ -790,3 +813,82 @@ display it via a blob/object URL rather than a plain `<img src>`.
 - Treat `401` as an authentication failure; clear the expired/invalid token
   and ask the user to sign in again. A `403` means the authenticated account
   lacks permission for that operation.
+
+## 7. Organizations (`/api/v1/organizations`)
+
+Public directory plus self-service management for organization admins
+(`ORG_ADMIN`; super admins pass every check). Creating organizations remains a
+super-admin operation.
+
+| Method & path | Description | Required role | Success |
+|---|---|---|---|
+| `GET /api/v1/organizations` | All organizations (for filters and organizer names) | Public | `200 OK` |
+| `GET /api/v1/organizations/{org_id}` | One organization | Public | `200 OK` |
+| `PATCH /api/v1/organizations/{org_id}` | Update `name`, `description`, `contact_email` | `ORG_ADMIN` | `200 OK` |
+| `GET /api/v1/organizations/{org_id}/members` | Members with name, e-mail and role | Any member of the organization | `200 OK` |
+| `POST /api/v1/organizations/{org_id}/members` | Add a registered user **by e-mail** (`{"email", "role"}`) or change their role | `ORG_ADMIN` | `200 OK` |
+| `PATCH /api/v1/organizations/{org_id}/members/{user_id}` | Change a member's role (`{"role"}`) | `ORG_ADMIN` | `200 OK` |
+| `DELETE /api/v1/organizations/{org_id}/members/{user_id}` | Remove a member; their tasks in the organization's events become unassigned | `ORG_ADMIN` | `204 No Content` |
+
+Business rule: an organization always keeps at least one `ORG_ADMIN`; demoting
+or removing the last one returns `409`. Adding an unknown e-mail returns `404`
+(the person has to register first).
+
+## 8. Notifications & Announcements
+
+Notifications are created in the same database transaction as the change that
+causes them, so they are never lost or sent for a change that was rolled back.
+
+| Trigger | Type | Recipients |
+|---|---|---|
+| Registration confirmed / waitlisted | `REGISTRATION_CONFIRMED` / `REGISTRATION_WAITLISTED` | The student |
+| Seat freed (cancellation or capacity increase) | `WAITLIST_PROMOTED` | Promoted student |
+| Start time, end time or location of a published event changed | `EVENT_UPDATED` | Confirmed + waitlisted |
+| Event cancelled | `EVENT_CANCELLED` | Confirmed + waitlisted |
+| Organizer announcement | `EVENT_ANNOUNCEMENT` | Confirmed + waitlisted |
+| 24 h and 2 h before the start (background job) | `EVENT_REMINDER` | Confirmed |
+| Event marked `COMPLETED` | `FEEDBACK_REQUESTED` | Attendees who checked in |
+| Task assigned | `TASK_ASSIGNED` | Assignee |
+
+| Method & path | Description | Success |
+|---|---|---|
+| `GET /api/v1/me/notifications?unread_only=&limit=` | Newest first, `{"items": [...], "unread_count": n}` | `200 OK` |
+| `POST /api/v1/me/notifications/{id}/read` | Mark one as read (`404` for someone else's) | `200 OK` |
+| `POST /api/v1/me/notifications/read-all` | Mark all as read, returns `{"updated": n}` | `200 OK` |
+| `GET /api/v1/events/{event_id}/announcements` | Announcements, visible to anyone who can see the event | `200 OK` |
+| `POST /api/v1/events/{event_id}/announcements` | `{"title", "message"}`; organizers/org admins, published events only; response includes `recipients` | `201 Created` |
+
+**Reminders** run inside the API process every `JOBS_INTERVAL_SECONDS`. Each
+reminder has a `dedup_key`, so it is created once even if the job runs again or
+on several replicas.
+
+**E-mail** uses the transactional outbox pattern: a background job e-mails
+notifications whose `emailed_at` is empty and marks them sent. It is disabled
+while `SMTP_HOST` is empty; failed sends are retried on the next run, and only
+notifications from the last 24 h are e-mailed.
+
+## 9. Post-event Feedback & Report
+
+| Method & path | Description | Required role | Success |
+|---|---|---|---|
+| `PUT /api/v1/events/{event_id}/feedback` | Create or update own feedback `{"rating": 1-5, "comment"}` | Attendee who **checked in**, event `COMPLETED` | `200 OK` |
+| `GET /api/v1/events/{event_id}/feedback/me` | Own feedback (`404` if none) | Authenticated | `200 OK` |
+| `GET /api/v1/events/{event_id}/report` | Attendance stats + rating average, distribution, response rate and anonymous comments | Organizer / org admin | `200 OK` |
+
+Errors: `409` while the event is not completed, `403` for registrants who did
+not check in, `422` for a rating outside 1–5.
+
+## 10. Event Team Tasks
+
+Responsibilities within an event's organizing team (e.g. "Check-in desk").
+
+| Method & path | Description | Required role | Success |
+|---|---|---|---|
+| `GET /api/v1/events/{event_id}/tasks` | Team board | Any member of the organizing organization | `200 OK` |
+| `POST /api/v1/events/{event_id}/tasks` | `{"title", "description", "assignee_id", "due_at"}` | Organizer / org admin | `201 Created` |
+| `PATCH /api/v1/events/{event_id}/tasks/{task_id}` | Any field; the **assignee** may change only `status` (`TODO`, `IN_PROGRESS`, `DONE`) | Organizer / org admin, or assignee | `200 OK` |
+| `DELETE /api/v1/events/{event_id}/tasks/{task_id}` | Delete a task | Organizer / org admin | `204 No Content` |
+| `GET /api/v1/me/tasks?include_done=` | Tasks assigned to me across events, with event summary | Authenticated | `200 OK` |
+
+The assignee must be a member of the organizing organization (`422`
+otherwise). Tasks cannot be added to `COMPLETED`/`CANCELLED` events (`409`).

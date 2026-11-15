@@ -25,9 +25,13 @@ import LoadingBox from '../../components/common/LoadingBox';
 import AttendanceStats from '../../components/events/AttendanceStats';
 import AttendeeTable from '../../components/events/AttendeeTable';
 import EventDetailCard from '../../components/events/EventDetailCard';
+import QrCameraScanner from '../../components/events/QrCameraScanner';
+import type { ScanOutcome } from '../../components/events/QrCameraScanner';
 import QrCheckInForm from '../../components/events/QrCheckInForm';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api/client';
 import { useApiError } from '../../hooks/useApiError';
+import { useOrganizations } from '../../hooks/useOrganizations';
 import { useSnackbar } from '../../hooks/useSnackbar';
 import type {
   AttendanceStatsResponse,
@@ -36,6 +40,12 @@ import type {
   EventResponse,
   EventStatus,
 } from '../../types';
+import EventAnnouncementsContainer from './EventAnnouncementsContainer';
+import EventFeedbackContainer from './EventFeedbackContainer';
+import EventReportContainer from './EventReportContainer';
+import EventTeamContainer from './EventTeamContainer';
+
+type DetailTab = 'details' | 'manage' | 'team' | 'report';
 
 export default function EventDetailContainer() {
   const { eventId } = useParams<{ eventId: string }>();
@@ -52,7 +62,9 @@ export default function EventDetailContainer() {
   const [actionLoading, setActionLoading] = useState(false);
   const [qrToken, setQrToken] = useState('');
   const [qrLoading, setQrLoading] = useState(false);
-  const [tab, setTab] = useState(0);
+  const [tab, setTab] = useState<DetailTab>('details');
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const { nameById } = useOrganizations();
 
   const isSuperAdmin = user?.global_role === 'SUPER_ADMIN';
   const isOrgAdmin = Boolean(
@@ -69,6 +81,11 @@ export default function EventDetailContainer() {
         (m.role === 'ORG_ADMIN' || m.role === 'ORGANIZER'),
     );
   const canManage = Boolean(isSuperAdmin || isOrgManager);
+  const isTeamMember = Boolean(
+    isSuperAdmin ||
+      (event &&
+        user?.organization_memberships.some((m) => m.organization_id === event.organization_id)),
+  );
   const canApproveOrAdvance = Boolean(isSuperAdmin || isOrgAdmin);
 
   useEffect(() => {
@@ -110,7 +127,7 @@ export default function EventDetailContainer() {
 
   // Fetch attendees / stats when the manage tab is shown
   useEffect(() => {
-    if (!canManage || !eventId || tab !== 1) return;
+    if (!canManage || !eventId || tab !== 'manage') return;
     let ignore = false;
 
     Promise.all([getAttendees(eventId), getAttendanceStats(eventId)])
@@ -177,25 +194,39 @@ export default function EventDetailContainer() {
     }
   };
 
+  const refreshAttendance = async () => {
+    if (!eventId) return;
+    const [att, st] = await Promise.all([getAttendees(eventId), getAttendanceStats(eventId)]);
+    setAttendees(att);
+    setStats(st);
+  };
+
+  const checkInToken = async (token: string): Promise<ScanOutcome> => {
+    if (!eventId) return { ok: false, message: 'Unknown event.' };
+    try {
+      const res = await checkIn(eventId, { token });
+      await refreshAttendance();
+      return { ok: true, message: `Welcome, ${res.full_name}! (${res.email})` };
+    } catch (err) {
+      return {
+        ok: false,
+        message: err instanceof ApiError ? err.detail : 'Check-in failed. Try again.',
+      };
+    }
+  };
+
   const handleQrCheckIn = async () => {
-    if (!eventId || !qrToken.trim()) return;
+    if (!qrToken.trim()) return;
     setQrLoading(true);
     clearError();
-    try {
-      const res = await checkIn(eventId, { token: qrToken.trim() });
-      showSnackbar(`Checked in ${res.full_name} (${res.email}).`);
+    const outcome = await checkInToken(qrToken.trim());
+    if (outcome.ok) {
+      showSnackbar(outcome.message);
       setQrToken('');
-      const [att, st] = await Promise.all([
-        getAttendees(eventId),
-        getAttendanceStats(eventId),
-      ]);
-      setAttendees(att);
-      setStats(st);
-    } catch (err) {
-      handleError(err);
-    } finally {
-      setQrLoading(false);
+    } else {
+      handleError(new Error(outcome.message));
     }
+    setQrLoading(false);
   };
 
   const handleCheckInAttendee = async (userId: string) => {
@@ -203,12 +234,7 @@ export default function EventDetailContainer() {
     try {
       await manualCheckIn(eventId, { user_id: userId });
       showSnackbar('Attendee checked in successfully.');
-      const [att, st] = await Promise.all([
-        getAttendees(eventId),
-        getAttendanceStats(eventId),
-      ]);
-      setAttendees(att);
-      setStats(st);
+      await refreshAttendance();
     } catch (err) {
       handleError(err);
     }
@@ -219,12 +245,7 @@ export default function EventDetailContainer() {
     try {
       await undoCheckIn(eventId, ticketId);
       showSnackbar('Check-in undone.', 'info');
-      const [att, st] = await Promise.all([
-        getAttendees(eventId),
-        getAttendanceStats(eventId),
-      ]);
-      setAttendees(att);
-      setStats(st);
+      await refreshAttendance();
     } catch (err) {
       handleError(err);
     }
@@ -279,16 +300,20 @@ export default function EventDetailContainer() {
     <>
       <ErrorAlert message={error} onClose={clearError} />
 
-      {canManage && (
-        <Tabs value={tab} onChange={(_, v: number) => setTab(v)} sx={{ mb: 2 }}>
-          <Tab label="Details" />
-          <Tab label="Manage" />
+      {(canManage || isTeamMember) && (
+        <Tabs value={tab} onChange={(_, v: DetailTab) => setTab(v)} sx={{ mb: 2 }}>
+          <Tab label="Details" value="details" />
+          {canManage && <Tab label="Check-in" value="manage" />}
+          {isTeamMember && <Tab label="Team" value="team" />}
+          {canManage && <Tab label="Report" value="report" />}
         </Tabs>
       )}
 
-      {tab === 0 && (
+      {tab === 'details' && (
+        <>
         <EventDetailCard
           event={event}
+          organizationName={nameById.get(event.organization_id)}
           actions={
             <>
               {canRegister && (
@@ -346,9 +371,21 @@ export default function EventDetailContainer() {
             </>
           }
         />
+        <EventAnnouncementsContainer
+          eventId={event.id}
+          canPost={canManage && !['DRAFT', 'SUBMITTED'].includes(event.status)}
+          onPosted={(n) => showSnackbar(`Announcement sent to ${n} participant(s).`)}
+        />
+        {event.status === 'COMPLETED' && myReg?.checked_in_at && (
+          <EventFeedbackContainer
+            eventId={event.id}
+            onSaved={() => showSnackbar('Thanks for your feedback!')}
+          />
+        )}
+        </>
       )}
 
-      {tab === 1 && canManage && (
+      {tab === 'manage' && canManage && (
         <Box>
           {stats && <AttendanceStats stats={stats} />}
           <QrCheckInForm
@@ -357,6 +394,12 @@ export default function EventDetailContainer() {
             disabled={!canCheckIn}
             onTokenChange={setQrToken}
             onSubmit={handleQrCheckIn}
+            onOpenCamera={() => setScannerOpen(true)}
+          />
+          <QrCameraScanner
+            open={scannerOpen}
+            onClose={() => setScannerOpen(false)}
+            onScan={checkInToken}
           />
           <Typography variant="h6" sx={{ mb: 1, mt: 2 }}>
             Attendees
@@ -368,6 +411,12 @@ export default function EventDetailContainer() {
           />
         </Box>
       )}
+
+      {tab === 'team' && isTeamMember && user && (
+        <EventTeamContainer event={event} currentUserId={user.id} canPlan={canManage} />
+      )}
+
+      {tab === 'report' && canManage && <EventReportContainer eventId={event.id} />}
 
       <AppSnackbar
         open={snackbar.open}

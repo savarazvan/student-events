@@ -7,6 +7,7 @@ import os
 import secrets
 from datetime import datetime, timezone
 from enum import Enum
+from urllib.parse import parse_qs, quote, urlsplit
 from uuid import UUID
 
 import jwt
@@ -19,6 +20,8 @@ from app.core.security import JWT_ALGORITHM, _secret_key
 from app.models.models import EventRegistration, Ticket
 
 TICKET_TOKEN_TYPE = "ticket"
+# Frontend page a phone camera opens when it scans the QR code.
+TICKET_CHECK_PATH = "/ticket-check"
 
 
 class TicketState(str, Enum):
@@ -62,10 +65,35 @@ def create_ticket_token(ticket: Ticket) -> str:
     return jwt.encode(payload, _ticket_secret(), algorithm=JWT_ALGORITHM)
 
 
+def ticket_check_url(token: str) -> str:
+    """URL encoded in the QR code.
+
+    A regular phone camera opens it in the browser (ticket verification page,
+    with a check-in button for organizers) instead of searching for raw text.
+    """
+    base = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+    return f"{base}{TICKET_CHECK_PATH}?token={quote(token, safe='')}"
+
+
+def extract_ticket_token(scanned: str) -> str:
+    """Accept either the bare token or the full ticket-check URL from the QR code."""
+    scanned = scanned.strip()
+    if "://" in scanned or scanned.startswith(TICKET_CHECK_PATH):
+        values = parse_qs(urlsplit(scanned).query).get("token")
+        if values:
+            return values[0].strip()
+    return scanned
+
+
 def decode_ticket_token(token: str) -> tuple[UUID, UUID, str]:
-    """Return (ticket_id, event_id, code) or raise InvalidTicketToken."""
+    """Return (ticket_id, event_id, code) or raise InvalidTicketToken.
+
+    ``token`` may be the bare signed token or the ticket-check URL containing it.
+    """
     try:
-        payload = jwt.decode(token.strip(), _ticket_secret(), algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(
+            extract_ticket_token(token), _ticket_secret(), algorithms=[JWT_ALGORITHM]
+        )
         if payload.get("typ") != TICKET_TOKEN_TYPE:
             raise InvalidTicketToken
         return UUID(payload["tid"]), UUID(payload["eid"]), str(payload["code"])

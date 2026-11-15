@@ -1,6 +1,5 @@
-import os
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
@@ -8,6 +7,13 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_optional_current_user
+from app.api.event_access import (
+    EVENT_MANAGER_ROLES,
+    get_event_or_404 as _get_event_or_404,
+    get_visible_event,
+    is_event_manager as _is_event_manager,
+    require_event_manager as _require_event_manager,
+)
 from app.core.database import get_db
 from app.core.image_utils import validate_image_url
 from app.models.models import (
@@ -17,6 +23,7 @@ from app.models.models import (
     EventRegistrationStatus,
     EventStatus,
     GlobalRole,
+    NotificationType,
     Organization,
     OrganizationMember,
     OrgRole,
@@ -38,13 +45,13 @@ from app.schemas.ticket import (
     CheckInResponse,
     ManualCheckInRequest,
 )
+from app.services.attendance import attendance_stats, check_in_closed_reason
 from app.services.event_lifecycle import (
     FINAL_STATUSES,
     is_transition_allowed,
     roles_for_transition,
 )
 from app.services.registrations import (
-    EVENT_NOT_FOUND_DETAIL,
     as_utc,
     cancel_registration,
     count_confirmed,
@@ -53,33 +60,13 @@ from app.services.registrations import (
     register_user,
     revoke_all_event_tickets,
 )
+from app.services.notifications import notify_users, registrant_ids
 from app.services.tickets import InvalidTicketToken, codes_match, decode_ticket_token
 
 router = APIRouter(prefix="/events", tags=["Events"])
-EVENT_MANAGER_ROLES: tuple[OrgRole, ...] = (OrgRole.ADMIN, OrgRole.ORGANIZER)
-# Statuses anyone may see; DRAFT/SUBMITTED are visible to the organization's managers only.
-PUBLIC_STATUSES: tuple[EventStatus, ...] = (
-    EventStatus.PUBLISHED,
-    EventStatus.IN_PROGRESS,
-    EventStatus.COMPLETED,
-    EventStatus.CANCELLED,
-)
 # Statuses listed in the public discovery feed.
 DISCOVERABLE_STATUSES: tuple[EventStatus, ...] = (EventStatus.PUBLISHED, EventStatus.IN_PROGRESS)
 INVALID_TICKET_DETAIL = "Invalid ticket."
-
-
-def _checkin_opens_before() -> timedelta:
-    return timedelta(minutes=int(os.getenv("CHECKIN_OPENS_MINUTES_BEFORE", "60")))
-
-
-async def _get_event_or_404(db: AsyncSession, event_id: UUID) -> Event:
-    event = await db.get(Event, event_id)
-    if event is None:
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail=EVENT_NOT_FOUND_DETAIL
-        )
-    return event
 
 
 async def _require_organization_role(
@@ -110,39 +97,6 @@ async def _require_organization_role(
         raise HTTPException(
             status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions for this organization.",
-        )
-
-
-async def _is_event_manager(
-    db: AsyncSession,
-    user: User | None,
-    event: Event,
-    allowed_roles: Sequence[OrgRole] = EVENT_MANAGER_ROLES,
-) -> bool:
-    if user is None:
-        return False
-    if user.global_role == GlobalRole.SUPER_ADMIN:
-        return True
-    membership_exists = await db.scalar(
-        select(OrganizationMember.id).where(
-            OrganizationMember.organization_id == event.organization_id,
-            OrganizationMember.user_id == user.id,
-            OrganizationMember.role_in_org.in_(allowed_roles),
-        )
-    )
-    return membership_exists is not None
-
-
-async def _require_event_manager(
-    db: AsyncSession,
-    user: User,
-    event: Event,
-    allowed_roles: Sequence[OrgRole],
-) -> None:
-    if not await _is_event_manager(db, user, event, allowed_roles):
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail="Insufficient permissions for this event.",
         )
 
 
@@ -255,15 +209,17 @@ async def get_event(
     current_user: User | None = Depends(get_optional_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Event:
-    event = await _get_event_or_404(db, event_id)
-    if event.status not in PUBLIC_STATUSES and not await _is_event_manager(
-        db, current_user, event
-    ):
-        # Do not reveal that unpublished events exist.
-        raise HTTPException(
-            status_code=http_status.HTTP_404_NOT_FOUND, detail=EVENT_NOT_FOUND_DETAIL
-        )
-    return event
+    return await get_visible_event(db, event_id, current_user)
+
+
+# Changes registrants must hear about: field -> label used in the notification.
+CRITICAL_FIELDS = {"start_time": "start time", "end_time": "end time", "location": "location"}
+
+
+def _differs(old: object, new: object) -> bool:
+    if isinstance(old, datetime) and isinstance(new, datetime):
+        return as_utc(old) != as_utc(new)
+    return old != new
 
 
 @router.put("/{event_id}", response_model=EventResponse)
@@ -308,12 +264,29 @@ async def update_event(
             ),
         )
     capacity_increased = new_capacity > event.capacity
+    changed_logistics = [
+        label
+        for field, label in CRITICAL_FIELDS.items()
+        if field in updates and _differs(getattr(event, field), updates[field])
+    ]
 
     for field, value in updates.items():
         setattr(event, field, value)
     await db.flush()
-    if capacity_increased and event.status in (EventStatus.PUBLISHED, EventStatus.IN_PROGRESS):
+    is_live = event.status in (EventStatus.PUBLISHED, EventStatus.IN_PROGRESS)
+    if capacity_increased and is_live:
         await promote_waitlist(db, event)
+    if changed_logistics and is_live:
+        notify_users(
+            db,
+            await registrant_ids(db, event.id),
+            NotificationType.EVENT_UPDATED,
+            f"Event updated: {event.title}",
+            f"The {', '.join(changed_logistics)} of {event.title} changed. "
+            f"It now takes place on {as_utc(event.start_time):%d %b %Y, %H:%M} UTC "
+            f"at {event.location}.",
+            event.id,
+        )
 
     await db.commit()
     await db.refresh(event)
@@ -348,7 +321,33 @@ async def update_event_status(
 
     event.status = target
     if target == EventStatus.CANCELLED:
+        notify_users(
+            db,
+            await registrant_ids(db, event.id),
+            NotificationType.EVENT_CANCELLED,
+            f"Event cancelled: {event.title}",
+            f"{event.title}, planned for {as_utc(event.start_time):%d %b %Y, %H:%M} UTC, "
+            "has been cancelled by the organizers. Your ticket is no longer valid.",
+            event.id,
+        )
         await revoke_all_event_tickets(db, event.id)
+    elif target == EventStatus.COMPLETED:
+        attendees = await db.scalars(
+            select(Ticket.user_id).where(
+                Ticket.event_id == event.id,
+                Ticket.revoked_at.is_(None),
+                Ticket.checked_in_at.is_not(None),
+            )
+        )
+        notify_users(
+            db,
+            attendees.all(),
+            NotificationType.FEEDBACK_REQUESTED,
+            f"How was {event.title}?",
+            f"Thanks for attending {event.title}! Rate the event and leave a comment "
+            "on its page to help the organizers improve.",
+            event.id,
+        )
     await db.commit()
     await db.refresh(event)
     return event
@@ -357,13 +356,15 @@ async def update_event_status(
 async def _registration_response(
     db: AsyncSession, registration: EventRegistration
 ) -> EventRegistrationResponse:
-    ticket_id = await db.scalar(
-        select(Ticket.id).where(
+    ticket = await db.scalar(
+        select(Ticket).where(
             Ticket.registration_id == registration.id, Ticket.revoked_at.is_(None)
         )
     )
     response = EventRegistrationResponse.model_validate(registration)
-    response.ticket_id = ticket_id
+    if ticket is not None:
+        response.ticket_id = ticket.id
+        response.checked_in_at = ticket.checked_in_at
     return response
 
 
@@ -457,23 +458,9 @@ async def list_event_attendees(
 async def _get_event_for_checkin(db: AsyncSession, event_id: UUID, user: User) -> Event:
     event = await _get_event_or_404(db, event_id)
     await _require_event_manager(db, user, event, EVENT_MANAGER_ROLES)
-    if event.status not in (EventStatus.PUBLISHED, EventStatus.IN_PROGRESS):
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT,
-            detail=f"Check-in is not possible for a {event.status.value} event.",
-        )
-    now = datetime.now(timezone.utc)
-    opens_at = as_utc(event.start_time) - _checkin_opens_before()
-    if now < opens_at:
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT,
-            detail=f"Check-in opens at {opens_at.isoformat()}.",
-        )
-    if now > as_utc(event.end_time):
-        raise HTTPException(
-            status_code=http_status.HTTP_409_CONFLICT,
-            detail="Check-in has closed: the event has ended.",
-        )
+    reason = check_in_closed_reason(event)
+    if reason is not None:
+        raise HTTPException(status_code=http_status.HTTP_409_CONFLICT, detail=reason)
     return event
 
 
@@ -585,37 +572,4 @@ async def get_attendance_stats(
 ) -> AttendanceStatsResponse:
     event = await _get_event_or_404(db, event_id)
     await _require_event_manager(db, current_user, event, EVENT_MANAGER_ROLES)
-
-    counts = dict(
-        (
-            await db.execute(
-                select(EventRegistration.status, func.count())
-                .where(EventRegistration.event_id == event_id)
-                .group_by(EventRegistration.status)
-            )
-        ).all()
-    )
-    checked_in = (
-        await db.scalar(
-            select(func.count())
-            .select_from(Ticket)
-            .where(
-                Ticket.event_id == event_id,
-                Ticket.revoked_at.is_(None),
-                Ticket.checked_in_at.is_not(None),
-            )
-        )
-        or 0
-    )
-    confirmed = counts.get(EventRegistrationStatus.CONFIRMED, 0)
-    return AttendanceStatsResponse(
-        event_id=event.id,
-        capacity=event.capacity,
-        confirmed=confirmed,
-        waitlisted=counts.get(EventRegistrationStatus.WAITLIST, 0),
-        cancelled=counts.get(EventRegistrationStatus.CANCELLED, 0),
-        checked_in=checked_in,
-        not_checked_in=max(confirmed - checked_in, 0),
-        attendance_rate=round(checked_in / confirmed, 4) if confirmed else 0.0,
-        spots_left=max(event.capacity - confirmed, 0),
-    )
+    return await attendance_stats(db, event)

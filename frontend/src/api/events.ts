@@ -1,5 +1,7 @@
 import { request } from './client';
 import type {
+  AnnouncementCreateRequest,
+  AnnouncementResponse,
   AttendanceStatsResponse,
   AttendeeResponse,
   CheckInRequest,
@@ -8,8 +10,13 @@ import type {
   EventListParams,
   EventRegistrationResponse,
   EventResponse,
+  EventReportResponse,
   EventStatusUpdateRequest,
+  EventTask,
+  EventTaskRequest,
   EventUpdateRequest,
+  FeedbackRequest,
+  FeedbackResponse,
   ManualCheckInRequest,
   PaginatedEventsResponse,
 } from '../types';
@@ -135,4 +142,56 @@ export function getAttendanceStats(
     'GET',
     `/events/${eventId}/attendance`,
   );
+}
+
+// ── Announcements ──
+
+export function listAnnouncements(eventId: string): Promise<AnnouncementResponse[]> {
+  return request<AnnouncementResponse[]>('GET', `/events/${eventId}/announcements`);
+}
+
+export function createAnnouncement(
+  eventId: string,
+  data: AnnouncementCreateRequest,
+): Promise<AnnouncementResponse> {
+  return request<AnnouncementResponse>('POST', `/events/${eventId}/announcements`, data);
+}
+
+// ── Feedback & report ──
+
+export function submitFeedback(
+  eventId: string,
+  data: FeedbackRequest,
+): Promise<FeedbackResponse> {
+  return request<FeedbackResponse>('PUT', `/events/${eventId}/feedback`, data);
+}
+
+export function getMyFeedback(eventId: string): Promise<FeedbackResponse> {
+  return request<FeedbackResponse>('GET', `/events/${eventId}/feedback/me`);
+}
+
+export function getEventReport(eventId: string): Promise<EventReportResponse> {
+  return request<EventReportResponse>('GET', `/events/${eventId}/report`);
+}
+
+// ── Event team tasks ──
+
+export function listTasks(eventId: string): Promise<EventTask[]> {
+  return request<EventTask[]>('GET', `/events/${eventId}/tasks`);
+}
+
+export function createTask(eventId: string, data: EventTaskRequest): Promise<EventTask> {
+  return request<EventTask>('POST', `/events/${eventId}/tasks`, data);
+}
+
+export function updateTask(
+  eventId: string,
+  taskId: string,
+  data: EventTaskRequest,
+): Promise<EventTask> {
+  return request<EventTask>('PATCH', `/events/${eventId}/tasks/${taskId}`, data);
+}
+
+export function deleteTask(eventId: string, taskId: string): Promise<void> {
+  return request<void>('DELETE', `/events/${eventId}/tasks/${taskId}`);
 }

@@ -9,7 +9,7 @@ import Select from '@mui/material/Select';
 import TextField from '@mui/material/TextField';
 import type { SelectChangeEvent } from '@mui/material/Select';
 
-import type { EventCategory, EventStatus } from '../../types';
+import type { EventCategory, EventStatus, OrganizationResponse } from '../../types';
 
 const CATEGORIES: EventCategory[] = [
   'WORKSHOP',
@@ -35,6 +35,7 @@ interface Props {
   category: string;
   status: string;
   organizationId: string;
+  organizations: OrganizationResponse[];
   startsAfter: string;
   startsBefore: string;
   onSearchChange: (v: string) => void;
@@ -51,6 +52,7 @@ export default function EventFilters({
   category,
   status,
   organizationId,
+  organizations,
   startsAfter,
   startsBefore,
   onSearchChange,
@@ -113,14 +115,21 @@ export default function EventFilters({
           ))}
         </Select>
       </FormControl>
-      <TextField
-        size="small"
-        label="Organization ID"
-        placeholder="UUID…"
-        value={organizationId}
-        onChange={(e) => onOrganizationIdChange(e.target.value)}
-        sx={{ minWidth: 180 }}
-      />
+      <FormControl size="small" sx={{ minWidth: 180 }}>
+        <InputLabel>Organization</InputLabel>
+        <Select
+          value={organizationId}
+          label="Organization"
+          onChange={(e: SelectChangeEvent) => onOrganizationIdChange(e.target.value)}
+        >
+          <MenuItem value="">All</MenuItem>
+          {organizations.map((org) => (
+            <MenuItem key={org.id} value={org.id}>
+              {org.name}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
       <TextField
         size="small"
         label="Starts After"

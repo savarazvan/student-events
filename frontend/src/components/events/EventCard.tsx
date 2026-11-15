@@ -1,4 +1,5 @@
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
+import GroupsIcon from '@mui/icons-material/Groups';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import PeopleIcon from '@mui/icons-material/People';
 import Box from '@mui/material/Box';
@@ -29,10 +30,11 @@ const STATUS_COLOR: Record<string, 'success' | 'warning' | 'info' | 'error' | 'd
 
 interface Props {
   event: EventResponse;
+  organizationName?: string;
   onClick: (id: string) => void;
 }
 
-export default function EventCard({ event, onClick }: Props) {
+export default function EventCard({ event, organizationName, onClick }: Props) {
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardActionArea onClick={() => onClick(event.id)} sx={{ flex: 1 }}>
@@ -56,6 +58,14 @@ export default function EventCard({ event, onClick }: Props) {
           <Typography variant="h6" gutterBottom noWrap>
             {event.title}
           </Typography>
+          {organizationName && (
+            <Box display="flex" alignItems="center" gap={0.5} mb={0.5}>
+              <GroupsIcon fontSize="small" color="action" />
+              <Typography variant="body2" color="text.secondary" noWrap>
+                {organizationName}
+              </Typography>
+            </Box>
+          )}
           <Box display="flex" alignItems="center" gap={0.5} mb={0.5}>
             <CalendarTodayIcon fontSize="small" color="action" />
             <Typography variant="body2" color="text.secondary">

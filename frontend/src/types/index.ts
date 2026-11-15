@@ -19,6 +19,17 @@ export type EventCategory =
   | 'OTHER';
 export type EventRegistrationStatus = 'CONFIRMED' | 'WAITLIST' | 'CANCELLED';
 export type TicketState = 'VALID' | 'USED' | 'REVOKED';
+export type EventTaskStatus = 'TODO' | 'IN_PROGRESS' | 'DONE';
+export type NotificationType =
+  | 'REGISTRATION_CONFIRMED'
+  | 'REGISTRATION_WAITLISTED'
+  | 'WAITLIST_PROMOTED'
+  | 'EVENT_UPDATED'
+  | 'EVENT_CANCELLED'
+  | 'EVENT_ANNOUNCEMENT'
+  | 'EVENT_REMINDER'
+  | 'FEEDBACK_REQUESTED'
+  | 'TASK_ASSIGNED';
 
 // ── Auth ──
 
@@ -154,6 +165,7 @@ export interface EventRegistrationResponse {
   status: EventRegistrationStatus;
   registered_at: string;
   ticket_id: string | null;
+  checked_in_at: string | null;
 }
 
 export interface AttendeeResponse {
@@ -186,6 +198,7 @@ export interface TicketResponse {
   issued_at: string;
   checked_in_at: string | null;
   qr_token: string | null;
+  qr_url: string | null;
   event: TicketEventSummary;
 }
 
@@ -239,4 +252,127 @@ export interface EventListParams {
   search?: string;
   page?: number;
   size?: number;
+}
+
+// ── Organizations (self-service) ──
+
+export interface OrganizationUpdateRequest {
+  name?: string;
+  description?: string | null;
+  contact_email?: string | null;
+}
+
+export interface OrganizationMemberDetail {
+  user_id: string;
+  full_name: string;
+  email: string;
+  role: OrgRole;
+}
+
+export interface OrganizationMemberAddRequest {
+  email: string;
+  role: OrgRole;
+}
+
+// ── Notifications & announcements ──
+
+export interface NotificationItem {
+  id: string;
+  type: NotificationType;
+  title: string;
+  message: string;
+  event_id: string | null;
+  created_at: string;
+  read_at: string | null;
+}
+
+export interface NotificationListResponse {
+  items: NotificationItem[];
+  unread_count: number;
+}
+
+export interface AnnouncementCreateRequest {
+  title: string;
+  message: string;
+}
+
+export interface AnnouncementResponse {
+  id: string;
+  event_id: string;
+  title: string;
+  message: string;
+  author_name: string;
+  created_at: string;
+  recipients: number | null;
+}
+
+// ── Feedback & report ──
+
+export interface FeedbackRequest {
+  rating: number;
+  comment?: string | null;
+}
+
+export interface FeedbackResponse {
+  id: string;
+  event_id: string;
+  rating: number;
+  comment: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FeedbackComment {
+  rating: number;
+  comment: string;
+  created_at: string;
+}
+
+export interface EventReportResponse {
+  event_id: string;
+  title: string;
+  status: EventStatus;
+  attendance: AttendanceStatsResponse;
+  feedback_count: number;
+  average_rating: number | null;
+  rating_distribution: Record<string, number>;
+  feedback_response_rate: number;
+  comments: FeedbackComment[];
+}
+
+// ── Event team tasks ──
+
+export interface EventTaskRequest {
+  title?: string;
+  description?: string | null;
+  assignee_id?: string | null;
+  due_at?: string | null;
+  status?: EventTaskStatus;
+}
+
+export interface EventTask {
+  id: string;
+  event_id: string;
+  title: string;
+  description: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  status: EventTaskStatus;
+  due_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MyTask extends EventTask {
+  event: TicketEventSummary;
+}
+
+export interface TicketVerificationResponse {
+  ticket_id: string;
+  state: TicketState;
+  event: TicketEventSummary;
+  checked_in_at: string | null;
+  attendee_name: string | null;
+  can_check_in: boolean;
+  check_in_unavailable_reason: string | null;
 }
