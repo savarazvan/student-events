@@ -11,8 +11,10 @@ if [ ! -f .env.production ]; then
   echo "  cp .env.production.example .env.production && nano .env.production"
   exit 1
 fi
-if grep -q "CHANGE-ME" .env.production; then
-  echo "Replace every CHANGE-ME value in .env.production first."
+# Only look at values (KEY=CHANGE-ME), not at the explanatory comments.
+if grep -qE '^[A-Z_]+=CHANGE-ME' .env.production; then
+  echo "Replace every CHANGE-ME value in .env.production first:"
+  grep -nE '^[A-Z_]+=CHANGE-ME' .env.production
   exit 1
 fi
 
