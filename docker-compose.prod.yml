@@ -1,0 +1,73 @@
+# Production stack for the VPS.
+#
+#   cp .env.production.example .env.production   # fill in the secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Only the web container (Caddy) is reachable from outside, on ports 80/443.
+# PostgreSQL and the API stay on the internal Docker network.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-student_events_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-student_events_db}
+      - SECRET_KEY=${SECRET_KEY:?Set SECRET_KEY in .env.production}
+      - TICKET_SECRET=${TICKET_SECRET:-}
+      - FRONTEND_URL=https://${DOMAIN:?Set DOMAIN in .env.production}
+      - CORS_ORIGINS=https://${DOMAIN}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@ubbcluj.ro}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env.production}
+      - CHECKIN_OPENS_MINUTES_BEFORE=${CHECKIN_OPENS_MINUTES_BEFORE:-60}
+      - BACKGROUND_JOBS_ENABLED=true
+      - JOBS_INTERVAL_SECONDS=${JOBS_INTERVAL_SECONDS:-60}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-true}
+      - SMTP_FROM=${SMTP_FROM:-UBB Student Events <no-reply@ubb-events.local>}
+    # Migrations + initial data (idempotent), then the API without auto-reload.
+    # Background jobs are idempotent, so two workers never duplicate reminders/e-mails.
+    command: sh -c "python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips='*'"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    restart: unless-stopped
+    environment:
+      - DOMAIN=${DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # TLS certificates; keep this volume
+      - caddy_config:/config
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

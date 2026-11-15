@@ -56,6 +56,30 @@ pnpm install
 pnpm dev                    # http://localhost:5173
 ```
 
+### Production deployment (VPS)
+
+`docker-compose.prod.yml` runs PostgreSQL, the API (no auto-reload, 2 workers)
+and a Caddy web server that serves the built React app, proxies `/api` to the
+backend and obtains the HTTPS certificate automatically. Only ports 80/443 are
+exposed.
+
+1. Point the domain's DNS **A record** to the server IP.
+2. On the server (Docker + Compose plugin installed, ports 80/443 free —
+   `sh deploy/server-check.sh` reports all of this):
+
+   ```sh
+   git clone https://github.com/savarazvan/student-events.git && cd student-events
+   cp .env.production.example .env.production
+   nano .env.production          # DOMAIN, POSTGRES_PASSWORD, SECRET_KEY, ADMIN_PASSWORD
+   sh deploy/deploy.sh main      # pull, build, start
+   ```
+
+3. Updates: `sh deploy/deploy.sh main` again. Logs:
+   `docker compose -f docker-compose.prod.yml --env-file .env.production logs -f`.
+
+The first super-admin is created from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on the
+first start. `.env.production` is git-ignored; never commit it.
+
 ### Running the tests
 
 The tests use an in-memory SQLite database, so no PostgreSQL is needed:
@@ -80,6 +104,7 @@ Frontend checks: `cd frontend && npx pnpm lint && npx pnpm build`.
 | `SQL_ECHO` | Log every SQL query | `false` |
 | `TICKET_SECRET` | Key that signs QR ticket tokens (changing it invalidates issued QR codes) | derived from `SECRET_KEY` |
 | `CHECKIN_OPENS_MINUTES_BEFORE` | How early before the start organizers can scan tickets | `60` |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | First super-admin, created on the first start | `admin@ubbcluj.ro` / `Admin123456!` (dev only) |
 | `FRONTEND_URL` | Public frontend URL; ticket QR codes link to `<FRONTEND_URL>/ticket-check` | `http://localhost:5173` |
 | `BACKGROUND_JOBS_ENABLED` | Run the reminder / e-mail jobs inside the API process | `true` |
 | `JOBS_INTERVAL_SECONDS` | How often the background jobs run | `60` (`30` in Docker) |

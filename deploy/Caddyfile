@@ -1,0 +1,29 @@
+# Production entry point: HTTPS (automatic Let's Encrypt certificate for $DOMAIN),
+# the built React app and a reverse proxy to the FastAPI backend.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	# API, Swagger docs and health check go to the backend container.
+	@backend path /api/* /docs /docs/* /openapi.json /health/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	# Everything else is the single-page app; unknown paths fall back to index.html
+	# so links such as /ticket-check?token=... and /events/<id> work on reload.
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}
