@@ -8,7 +8,6 @@ Ticket-related e-mails (confirmation, promotion, reminders) carry the QR ticket.
 """
 
 import asyncio
-import html
 import logging
 import os
 from collections.abc import Callable, Iterable, Sequence
@@ -29,9 +28,11 @@ from app.models.models import (
     EventStatus,
     Notification,
     NotificationType,
+    Organization,
     Ticket,
     User,
 )
+from app.services.email_templates import EventInfo, TicketInfo, render_notification_html
 from app.services.tickets import (
     create_ticket_token,
     frontend_url,
@@ -296,41 +297,81 @@ def smtp_sender_from_env() -> EmailSender | None:
     return send
 
 
-def build_email(notification: Notification, to: str, ticket: Ticket | None) -> EmailMessage:
-    """Plain-text + HTML e-mail for a notification; with the QR ticket when given."""
+def build_email(
+    notification: Notification,
+    to: str,
+    ticket: Ticket | None,
+    event: EventInfo | None = None,
+) -> EmailMessage:
+    """Plain-text + branded HTML e-mail for a notification; with the QR ticket when given."""
     message = EmailMessage()
     message["To"] = to
     message["Subject"] = notification.title
+    app_url = frontend_url()
 
     text = notification.message
+    if event is not None:
+        text += f"\n\n{event.title}\nWhen: {event.when}\nWhere: {event.location}"
     if ticket is not None:
         text += (
-            f"\n\nYour QR ticket is attached. Show it at the entrance."
-            f"\nYou can also open it in the app: {frontend_url()}/tickets/{ticket.id}"
+            "\n\nYour QR ticket is attached. Show it at the entrance."
+            f"\nOpen it in the app: {app_url}/tickets/{ticket.id}"
         )
     message.set_content(text)
-    if ticket is None:
-        return message
 
-    qr_cid = make_msgid(domain="ubb-events.local")
-    ticket_link = f"{frontend_url()}/tickets/{ticket.id}"
+    qr_cid = make_msgid(domain="ubb-events.local") if ticket is not None else None
+    ticket_info = (
+        TicketInfo(
+            code=str(ticket.id).split("-")[0].upper(),
+            qr_cid=qr_cid[1:-1],
+            url=f"{app_url}/tickets/{ticket.id}",
+        )
+        if ticket is not None
+        else None
+    )
     message.add_alternative(
-        f"""<div style="font-family:Segoe UI,Arial,sans-serif;color:#172033;max-width:520px">
-  <h2 style="margin:0 0 12px;font-size:20px">{html.escape(notification.title)}</h2>
-  <p style="margin:0 0 16px;line-height:1.5">{html.escape(notification.message)}</p>
-  <div style="text-align:center;padding:16px;border:1px solid #d7dce8;border-radius:10px">
-    <img src="cid:{qr_cid[1:-1]}" alt="QR ticket" width="240" height="240">
-    <p style="margin:8px 0 0;font-size:13px;color:#5a6478">Show this QR code at the entrance.</p>
-  </div>
-  <p style="margin:16px 0 0;font-size:13px;color:#5a6478">
-    Open the ticket in the app: <a href="{html.escape(ticket_link)}">{html.escape(ticket_link)}</a>
-  </p>
-</div>""",
+        render_notification_html(
+            notification_type=notification.type,
+            title=notification.title,
+            message=notification.message,
+            app_url=app_url,
+            event=event,
+            ticket=ticket_info,
+        ),
         subtype="html",
     )
-    png = render_qr_png(ticket_check_url(create_ticket_token(ticket)))
-    message.get_payload()[1].add_related(png, "image", "png", cid=qr_cid, filename="ticket-qr.png")
+    if ticket is not None:
+        png = render_qr_png(ticket_check_url(create_ticket_token(ticket)))
+        message.get_payload()[1].add_related(
+            png, "image", "png", cid=qr_cid, filename="ticket-qr.png"
+        )
     return message
+
+
+async def _event_info(db: AsyncSession, event_id: UUID | None) -> EventInfo | None:
+    if event_id is None:
+        return None
+    row = (
+        await db.execute(
+            select(Event, Organization.name)
+            .join(Organization, Organization.id == Event.organization_id)
+            .where(Event.id == event_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    event, organization = row
+    start, end = format_when(event.start_time), format_when(event.end_time)
+    start_day, end_day = start.split(", ")[0], end.split(", ")[0]
+    # Same day: "10 Dec 2026, 20:00 (EET) – 22:00 (EET)"; otherwise both full dates.
+    when = f"{start} – {end.split(', ')[1]}" if start_day == end_day else f"{start} – {end}"
+    return EventInfo(
+        title=event.title,
+        when=when,
+        location=event.location,
+        organization=organization,
+        url=f"{frontend_url()}/events/{event.id}",
+    )
 
 
 async def _valid_ticket(db: AsyncSession, notification: Notification) -> Ticket | None:
@@ -366,7 +407,12 @@ async def deliver_pending_emails(
     ).all()
     sent = 0
     for notification, email in rows:
-        message = build_email(notification, email, await _valid_ticket(db, notification))
+        message = build_email(
+            notification,
+            email,
+            await _valid_ticket(db, notification),
+            await _event_info(db, notification.event_id),
+        )
         try:
             # smtplib is blocking; keep the event loop free.
             await asyncio.to_thread(send, message)
