@@ -1,7 +1,8 @@
 # UBB Student Events
 
-FastAPI + PostgreSQL backend for managing events of UBB student organizations.
-The API reference for frontend developers is further below in this file.
+FastAPI + PostgreSQL backend and React (Vite + MUI) frontend for managing events
+of UBB student organizations. The API reference for frontend developers is
+further below in this file.
 
 ## Running the project
 
@@ -14,10 +15,12 @@ cp .env.example .env        # Windows: copy .env.example .env
 docker compose up --build
 ```
 
-This starts PostgreSQL, applies the database migrations, seeds the initial data and starts
-the API with auto-reload (the `backend/` folder is mounted into the container,
-so code changes are picked up immediately).
+This starts PostgreSQL, applies the database migrations, seeds the initial data,
+starts the API and the web app, both with auto-reload (the `backend/` and
+`frontend/` folders are mounted into the containers, so code changes are picked
+up immediately). The first build takes a few minutes.
 
+- **Web app: http://localhost:5173**
 - API: http://localhost:8000
 - Interactive docs (Swagger): http://localhost:8000/docs
 - DB health check: http://localhost:8000/health/db
@@ -27,10 +30,11 @@ Seeded super-admin account: `admin@ubbcluj.ro` / `Admin123456!`
 
 Stop with `Ctrl+C`; `docker compose down -v` also wipes the database.
 
-### Option B — Local Python (no Docker for the API)
+### Option B — Run the backend and frontend locally (Docker only for the database)
 
-Requirements: **Python 3.12+** and a running PostgreSQL (for example only the
-database container: `docker compose up -d db`).
+Requirements: **Python 3.12+**, **Node.js 20+** with pnpm (`npm install -g pnpm`),
+and a running PostgreSQL (for example only the database container:
+`docker compose up -d db`).
 
 ```sh
 cp .env.example .env        # set DATABASE_URL to your PostgreSQL (localhost:5432 by default)
@@ -43,6 +47,14 @@ uvicorn app.main:app --reload
 ```
 
 The backend reads the `.env` file from the repository root automatically.
+
+In a second terminal start the web app (it proxies `/api` to `localhost:8000`):
+
+```sh
+cd frontend
+pnpm install
+pnpm dev                    # http://localhost:5173
+```
 
 ### Running the tests
 

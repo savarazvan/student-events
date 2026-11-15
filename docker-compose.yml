@@ -38,5 +38,23 @@ services:
       db:
         condition: service_healthy
 
+  frontend:
+    build: ./frontend
+    container_name: student_events_frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      # The dev server proxies /api to the backend container
+      - VITE_PROXY_TARGET=http://backend:8000
+      # File-change events do not cross the Windows/macOS bind mount
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./frontend:/app
+      # keep the container's own node_modules instead of the host's
+      - /app/node_modules
+    depends_on:
+      - backend
+
 volumes:
   postgres_data:
