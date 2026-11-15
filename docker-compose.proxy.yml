@@ -1,0 +1,13 @@
+# Override for servers that already run a web server on ports 80/443.
+# Enabled by deploy/deploy.sh when BEHIND_HOST_PROXY=true in .env.production.
+#
+# The web container listens only on 127.0.0.1:WEB_PORT (plain HTTP); the host's
+# web server proxies the domain to it and handles HTTPS.
+services:
+  web:
+    ports: !override
+      - "127.0.0.1:${WEB_PORT:-8081}:80"
+    volumes: !override
+      - ./deploy/Caddyfile.internal:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config

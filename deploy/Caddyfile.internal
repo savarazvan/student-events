@@ -1,0 +1,26 @@
+# Used when the server already runs a web server (e.g. a system Caddy or nginx)
+# on ports 80/443. This container then serves plain HTTP on 127.0.0.1:WEB_PORT
+# and the host's web server terminates HTTPS (see deploy/host-caddy.snippet).
+:80 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	@backend path /api/* /docs /docs/* /openapi.json /health/*
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}

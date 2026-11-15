@@ -1,0 +1,8 @@
+# Add this block to the host's /etc/caddy/Caddyfile when BEHIND_HOST_PROXY=true,
+# then:  caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy
+# (use the same port as WEB_PORT in .env.production)
+events.alexandrupaloti.com {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy 127.0.0.1:8081
+}

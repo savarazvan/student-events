@@ -77,6 +77,12 @@ exposed.
 3. Updates: `sh deploy/deploy.sh main` again. Logs:
    `docker compose -f docker-compose.prod.yml --env-file .env.production logs -f`.
 
+If the server already runs a web server on ports 80/443 (e.g. a system Caddy),
+set `BEHIND_HOST_PROXY=true` in `.env.production`: the app then listens only on
+`127.0.0.1:WEB_PORT` (default 8081) and the host proxies the domain to it — for
+Caddy add the block from `deploy/host-caddy.snippet` to `/etc/caddy/Caddyfile`
+and run `systemctl reload caddy`.
+
 The first super-admin is created from `ADMIN_EMAIL` / `ADMIN_PASSWORD` on the
 first start. `.env.production` is git-ignored; never commit it.
 
