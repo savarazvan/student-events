@@ -60,7 +60,7 @@ from app.services.registrations import (
     register_user,
     revoke_all_event_tickets,
 )
-from app.services.notifications import notify_users, registrant_ids
+from app.services.notifications import format_when, notify_users, registrant_ids
 from app.services.tickets import InvalidTicketToken, codes_match, decode_ticket_token
 
 router = APIRouter(prefix="/events", tags=["Events"])
@@ -283,8 +283,7 @@ async def update_event(
             NotificationType.EVENT_UPDATED,
             f"Event updated: {event.title}",
             f"The {', '.join(changed_logistics)} of {event.title} changed. "
-            f"It now takes place on {as_utc(event.start_time):%d %b %Y, %H:%M} UTC "
-            f"at {event.location}.",
+            f"It now takes place on {format_when(event.start_time)} at {event.location}.",
             event.id,
         )
 
@@ -326,7 +325,7 @@ async def update_event_status(
             await registrant_ids(db, event.id),
             NotificationType.EVENT_CANCELLED,
             f"Event cancelled: {event.title}",
-            f"{event.title}, planned for {as_utc(event.start_time):%d %b %Y, %H:%M} UTC, "
+            f"{event.title}, planned for {format_when(event.start_time)}, "
             "has been cancelled by the organizers. Your ticket is no longer valid.",
             event.id,
         )

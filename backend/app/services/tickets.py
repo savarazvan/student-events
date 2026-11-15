@@ -12,6 +12,7 @@ from uuid import UUID
 
 import jwt
 import qrcode
+import qrcode.image.pure
 import qrcode.image.svg
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -65,14 +66,18 @@ def create_ticket_token(ticket: Ticket) -> str:
     return jwt.encode(payload, _ticket_secret(), algorithm=JWT_ALGORITHM)
 
 
+def frontend_url() -> str:
+    """Public base URL of the web app (links in QR codes and e-mails)."""
+    return os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
+
+
 def ticket_check_url(token: str) -> str:
     """URL encoded in the QR code.
 
     A regular phone camera opens it in the browser (ticket verification page,
     with a check-in button for organizers) instead of searching for raw text.
     """
-    base = os.getenv("FRONTEND_URL", "http://localhost:5173").rstrip("/")
-    return f"{base}{TICKET_CHECK_PATH}?token={quote(token, safe='')}"
+    return f"{frontend_url()}{TICKET_CHECK_PATH}?token={quote(token, safe='')}"
 
 
 def extract_ticket_token(scanned: str) -> str:
@@ -111,6 +116,20 @@ def render_qr_svg(data: str) -> bytes:
         image_factory=qrcode.image.svg.SvgPathImage,
         error_correction=qrcode.constants.ERROR_CORRECT_M,
         box_size=10,
+        border=4,
+    )
+    buffer = io.BytesIO()
+    image.save(buffer)
+    return buffer.getvalue()
+
+
+def render_qr_png(data: str) -> bytes:
+    """PNG version of the QR code, for e-mails (most mail clients block SVG)."""
+    image = qrcode.make(
+        data,
+        image_factory=qrcode.image.pure.PyPNGImage,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=8,
         border=4,
     )
     buffer = io.BytesIO()

@@ -36,11 +36,14 @@ services:
       - CHECKIN_OPENS_MINUTES_BEFORE=${CHECKIN_OPENS_MINUTES_BEFORE:-60}
       - BACKGROUND_JOBS_ENABLED=true
       - JOBS_INTERVAL_SECONDS=${JOBS_INTERVAL_SECONDS:-60}
+      - REMINDER_HOURS=${REMINDER_HOURS:-24,3}
+      - APP_TIMEZONE=${APP_TIMEZONE:-Europe/Bucharest}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_STARTTLS=${SMTP_STARTTLS:-true}
+      - SMTP_SSL=${SMTP_SSL:-}
       - SMTP_FROM=${SMTP_FROM:-UBB Student Events <no-reply@ubb-events.local>}
     # Migrations + initial data (idempotent), then the API without auto-reload.
     # Background jobs are idempotent, so two workers never duplicate reminders/e-mails.

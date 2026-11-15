@@ -38,9 +38,12 @@ services:
       - SMTP_USERNAME=${SMTP_USERNAME:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_STARTTLS=${SMTP_STARTTLS:-true}
+      - SMTP_SSL=${SMTP_SSL:-}
       - SMTP_FROM=${SMTP_FROM:-UBB Student Events <no-reply@ubb-events.local>}
       - BACKGROUND_JOBS_ENABLED=${BACKGROUND_JOBS_ENABLED:-true}
       - JOBS_INTERVAL_SECONDS=${JOBS_INTERVAL_SECONDS:-30}
+      - REMINDER_HOURS=${REMINDER_HOURS:-24,3}
+      - APP_TIMEZONE=${APP_TIMEZONE:-Europe/Bucharest}
     # Aplică migrațiile Alembic + datele inițiale (idempotent), apoi pornește API-ul
     command: sh -c "python -m app.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:

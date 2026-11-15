@@ -37,8 +37,8 @@ export default function NotificationsContainer() {
       </Box>
       <Typography variant="body2" color="text.secondary" mb={2}>
         Registration updates, event changes, announcements from organizers, reminders 24h and
-        2h before your events, and tasks assigned to you. When e-mail delivery is configured, the
-        same messages are also sent to your inbox.
+        3h before your events, and tasks assigned to you. The same messages are also sent to your
+        e-mail; registration and reminder e-mails include your QR ticket.
       </Typography>
       {items.length === 0 ? (
         <EmptyState message="You have no notifications yet." />

@@ -6,7 +6,13 @@ import pytest
 from sqlalchemy import select
 
 from app.models.models import EventStatus, Notification, OrgRole
-from app.services.notifications import deliver_pending_emails, send_due_reminders
+from email.message import EmailMessage
+
+from app.services.notifications import (
+    deliver_pending_emails,
+    format_when,
+    send_due_reminders,
+)
 from tests.test_attendance import add_member, make_event, make_user, register
 
 pytestmark = pytest.mark.asyncio
@@ -173,10 +179,12 @@ async def test_reminders_are_sent_once_to_confirmed_attendees(
     ).all()
     assert {(n.event_id, n.user_id, n.dedup_key.split(":")[1]) for n in reminders} == {
         (tomorrow.id, ana_user.id, "24h"),
-        (soon.id, ana_user.id, "2h"),
+        (soon.id, ana_user.id, "3h"),
     }
+    soon_reminder = next(n for n in reminders if n.event_id == soon.id)
+    assert soon_reminder.title.endswith("starts in 1 hour 30 minutes")
 
-    # Once the event gets within 2 hours, the 24h-reminded attendee gets the 2h one too.
+    # Once the event gets within 3 hours, the 24h-reminded attendee gets the 3h one too.
     in_19h = datetime.now(timezone.utc) + timedelta(hours=19)
     assert await send_due_reminders(db_session, now=in_19h) == 1
 
@@ -186,10 +194,12 @@ async def test_email_outbox_delivery(async_client, db_session, test_admin, test_
     _, ana = await make_user(async_client, db_session, "ana@example.com")
     await register(async_client, event, ana)
 
-    sent: list[tuple[str, str]] = []
-    assert await deliver_pending_emails(db_session, lambda to, s, b: sent.append((to, s))) == 1
-    assert sent == [("ana@example.com", "You're registered: Attendance Test Event")]
-    assert await deliver_pending_emails(db_session, lambda *a: sent.append(a)) == 0
+    sent: list[EmailMessage] = []
+    assert await deliver_pending_emails(db_session, sent.append) == 1
+    assert [(m["To"], m["Subject"]) for m in sent] == [
+        ("ana@example.com", "You're registered: Attendance Test Event")
+    ]
+    assert await deliver_pending_emails(db_session, sent.append) == 0
 
 
 async def test_email_failure_keeps_notification_pending(
@@ -218,3 +228,56 @@ async def test_org_member_role_cannot_send_announcements(
         headers=headers,
     )
     assert response.status_code == 403
+
+
+async def test_ticket_email_carries_the_qr_code(
+    async_client, db_session, test_admin, test_organization, monkeypatch
+):
+    monkeypatch.setenv("FRONTEND_URL", "https://events.example.ro")
+    event = await make_event(db_session, test_organization, test_admin, capacity=1)
+    _, ana = await make_user(async_client, db_session, "ana@example.com")
+    _, bob = await make_user(async_client, db_session, "bob@example.com")
+    await register(async_client, event, ana)  # confirmed: gets the ticket by e-mail
+    await register(async_client, event, bob)  # waitlisted: no ticket yet
+
+    sent: list[EmailMessage] = []
+    assert await deliver_pending_emails(db_session, sent.append) == 2
+    by_recipient = {m["To"]: m for m in sent}
+
+    confirmed = by_recipient["ana@example.com"]
+    html_part = confirmed.get_body(preferencelist=("html",))
+    qr = [part for part in confirmed.walk() if part.get_content_type() == "image/png"]
+    assert len(qr) == 1 and qr[0].get_content()[1:4] == b"PNG"
+    assert f"cid:{qr[0]['Content-ID'][1:-1]}" in html_part.get_content()
+    assert "https://events.example.ro/tickets/" in confirmed.get_body(("plain",)).get_content()
+
+    waitlisted = by_recipient["bob@example.com"]
+    assert not [p for p in waitlisted.walk() if p.get_content_type() == "image/png"]
+
+
+async def test_reminder_hours_are_configurable(
+    async_client, db_session, test_admin, test_organization, monkeypatch
+):
+    monkeypatch.setenv("REMINDER_HOURS", "6")
+    event = await make_event(
+        db_session, test_organization, test_admin, starts_in=timedelta(hours=5)
+    )
+    _, ana = await make_user(async_client, db_session, "ana@example.com")
+    await register(async_client, event, ana)
+
+    assert await send_due_reminders(db_session) == 1
+    reminder = await db_session.scalar(
+        select(Notification).where(Notification.type == "EVENT_REMINDER")
+    )
+    assert reminder.dedup_key == f"reminder:6h:{event.id}"
+    assert reminder.title.endswith("starts in 5 hours")
+
+
+async def test_times_are_shown_in_romanian_time(monkeypatch):
+    monkeypatch.delenv("APP_TIMEZONE", raising=False)
+    assert format_when(datetime(2026, 12, 10, 18, 0, tzinfo=timezone.utc)) == (
+        "10 Dec 2026, 20:00 (EET)"
+    )
+    assert format_when(datetime(2026, 7, 10, 18, 0, tzinfo=timezone.utc)) == (
+        "10 Jul 2026, 21:00 (EEST)"
+    )

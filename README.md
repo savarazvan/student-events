@@ -115,7 +115,9 @@ Frontend checks: `cd frontend && npx pnpm lint && npx pnpm build`.
 | `BACKGROUND_JOBS_ENABLED` | Run the reminder / e-mail jobs inside the API process | `true` |
 | `JOBS_INTERVAL_SECONDS` | How often the background jobs run | `60` (`30` in Docker) |
 | `SMTP_HOST` | SMTP server for notification e-mails; **empty disables e-mail** (in-app notifications still work) | empty |
-| `SMTP_PORT` / `SMTP_STARTTLS` | SMTP port and whether to use STARTTLS | `587` / `true` |
+| `SMTP_PORT` / `SMTP_STARTTLS` / `SMTP_SSL` | Port 587 + STARTTLS, or 465 + implicit TLS (`SMTP_SSL`, the default on 465). Hetzner blocks outgoing 25/465: use 587 | `587` / `true` / auto |
+| `REMINDER_HOURS` | Hours before an event when reminders are sent | `24,3` |
+| `APP_TIMEZONE` | Time zone for dates in notifications and e-mails | `Europe/Bucharest` |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | SMTP credentials | empty |
 | `SMTP_FROM` | Sender of notification e-mails | `UBB Student Events <no-reply@ubb-events.local>` |
 
@@ -877,7 +879,7 @@ causes them, so they are never lost or sent for a change that was rolled back.
 | Start time, end time or location of a published event changed | `EVENT_UPDATED` | Confirmed + waitlisted |
 | Event cancelled | `EVENT_CANCELLED` | Confirmed + waitlisted |
 | Organizer announcement | `EVENT_ANNOUNCEMENT` | Confirmed + waitlisted |
-| 24 h and 2 h before the start (background job) | `EVENT_REMINDER` | Confirmed |
+| 24 h and 3 h before the start (background job, `REMINDER_HOURS`) | `EVENT_REMINDER` | Confirmed |
 | Event marked `COMPLETED` | `FEEDBACK_REQUESTED` | Attendees who checked in |
 | Task assigned | `TASK_ASSIGNED` | Assignee |
 
@@ -896,7 +898,9 @@ on several replicas.
 **E-mail** uses the transactional outbox pattern: a background job e-mails
 notifications whose `emailed_at` is empty and marks them sent. It is disabled
 while `SMTP_HOST` is empty; failed sends are retried on the next run, and only
-notifications from the last 24 h are e-mailed.
+notifications from the last 24 h are e-mailed. Registration confirmation,
+waitlist promotion and reminder e-mails include the attendee's QR ticket as an
+inline PNG plus a link to the ticket in the app.
 
 ## 9. Post-event Feedback & Report
 
