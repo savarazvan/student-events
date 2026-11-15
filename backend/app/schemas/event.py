@@ -4,8 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.models.models import EventStatus
-from app.models.models import EventRegistrationStatus
+from app.models.models import EventCategory, EventRegistrationStatus, EventStatus
 
 
 class EventCreate(BaseModel):
@@ -17,11 +16,13 @@ class EventCreate(BaseModel):
     capacity: Annotated[int, Field(gt=0)]
     organization_id: UUID
     image_url: str | None = None
+    category: EventCategory = EventCategory.OTHER
+    registration_deadline: datetime | None = None
 
-    @field_validator("start_time", "end_time")
+    @field_validator("start_time", "end_time", "registration_deadline")
     @classmethod
-    def require_timezone(cls, value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
             raise ValueError("Event times must include a timezone.")
         return value
 
@@ -29,6 +30,8 @@ class EventCreate(BaseModel):
     def validate_time_range(self) -> "EventCreate":
         if self.end_time <= self.start_time:
             raise ValueError("end_time must be after start_time.")
+        if self.registration_deadline is not None and self.registration_deadline > self.start_time:
+            raise ValueError("registration_deadline must not be after start_time.")
         return self
 
 
@@ -40,8 +43,10 @@ class EventUpdate(BaseModel):
     end_time: datetime | None = None
     capacity: Annotated[int, Field(gt=0)] | None = None
     image_url: str | None = None
+    category: EventCategory | None = None
+    registration_deadline: datetime | None = None
 
-    @field_validator("start_time", "end_time")
+    @field_validator("start_time", "end_time", "registration_deadline")
     @classmethod
     def require_timezone(cls, value: datetime | None) -> datetime | None:
         if value is not None and (value.tzinfo is None or value.utcoffset() is None):
@@ -50,7 +55,7 @@ class EventUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_non_nullable_fields(self) -> "EventUpdate":
-        for field_name in ("title", "location", "start_time", "end_time", "capacity"):
+        for field_name in ("title", "location", "start_time", "end_time", "capacity", "category"):
             if field_name in self.model_fields_set and getattr(self, field_name) is None:
                 raise ValueError(f"{field_name} cannot be null.")
         return self
@@ -75,6 +80,8 @@ class EventResponse(BaseModel):
     created_by_id: UUID
     created_at: datetime
     image_url: str | None
+    category: EventCategory
+    registration_deadline: datetime | None
 
 
 class EventRegistrationResponse(BaseModel):
@@ -85,6 +92,7 @@ class EventRegistrationResponse(BaseModel):
     user_id: UUID
     status: EventRegistrationStatus
     registered_at: datetime
+    ticket_id: UUID | None = None
 
 
 class AttendeeResponse(BaseModel):
@@ -93,6 +101,8 @@ class AttendeeResponse(BaseModel):
     email: str
     registered_at: datetime
     status: EventRegistrationStatus
+    ticket_id: UUID | None = None
+    checked_in_at: datetime | None = None
 
 
 class PaginatedEventsResponse(BaseModel):

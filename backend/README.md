@@ -1,20 +1,20 @@
 # Backend database migrations
 
-Run Alembic commands from the `backend/` directory. Set `DATABASE_URL` to the
-PostgreSQL connection string for the target environment; if it is not set,
-Alembic uses `postgresql+asyncpg://postgres:postgrespassword@db:5432/student_events_db`.
+Migrations live in `alembic/versions/`. They are applied **automatically** when
+the API starts and when `python -m app.seed` runs, so normally nothing needs to
+be done by hand. A database created by an older version of the app (tables
+built with `create_all`, no `alembic_version` table) is detected and adopted.
 
-Create and apply the initial migration:
+Run Alembic commands from the `backend/` directory. The database URL comes from
+`DATABASE_URL` (or the repository's `.env`), the same as the application.
+
+After changing a model, create a new revision and review it before committing:
 
 ```sh
-alembic revision --autogenerate -m "Initial RBAC and Auth migration"
+alembic revision --autogenerate -m "describe the change"
 alembic upgrade head
+alembic check        # verifies models and migrations are in sync
 ```
 
-Autogeneration connects to the configured database and compares its schema
-against the SQLAlchemy models. Review the generated revision before applying
-it, especially when working with PostgreSQL enums.
-
-The admin API stores an optional organization contact email. Include model
-changes in a new Alembic revision and apply it with `alembic upgrade head`
-before deploying the updated API to an existing database.
+Autogenerate does not detect new values in PostgreSQL enums or data changes;
+add those by hand (see `0002_event_lifecycle_and_tickets.py` for an example).

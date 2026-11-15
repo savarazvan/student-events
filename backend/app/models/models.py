@@ -27,8 +27,21 @@ class OrgRole(str, Enum):
 
 class EventStatus(str, Enum):
     DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
     PUBLISHED = "PUBLISHED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
     CANCELLED = "CANCELLED"
+
+
+class EventCategory(str, Enum):
+    WORKSHOP = "WORKSHOP"
+    CONFERENCE = "CONFERENCE"
+    TRAINING = "TRAINING"
+    SOCIAL = "SOCIAL"
+    VOLUNTEERING = "VOLUNTEERING"
+    COMPETITION = "COMPETITION"
+    OTHER = "OTHER"
 
 
 class EventRegistrationStatus(str, Enum):
@@ -113,6 +126,16 @@ class Event(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     image_url: Mapped[str | None] = mapped_column(String, nullable=True)
+    category: Mapped[EventCategory] = mapped_column(
+        SqlEnum(EventCategory, name="event_category"),
+        default=EventCategory.OTHER,
+        server_default=EventCategory.OTHER.value,
+        nullable=False,
+    )
+    # Registrations close at this moment; when NULL they close at start_time.
+    registration_deadline: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     organization: Mapped[Organization] = relationship(back_populates="events")
     created_by: Mapped[User] = relationship()
@@ -141,6 +164,36 @@ class EventRegistration(Base):
 
     user: Mapped[User] = relationship(back_populates="registrations")
     event: Mapped[Event] = relationship(back_populates="registrations")
+    ticket: Mapped[Ticket | None] = relationship(
+        back_populates="registration", cascade=_DELETE_ORPHAN_CASCADE, uselist=False
+    )
 
 
 Registration = EventRegistration
+
+
+class Ticket(Base):
+    """Digital entry ticket, issued for a CONFIRMED registration.
+
+    One ticket per registration. ``code`` is random and is rotated whenever the
+    ticket is re-issued, so QR tokens of a revoked ticket can never be reused.
+    """
+
+    __tablename__ = "tickets"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    registration_id: Mapped[UUID] = mapped_column(
+        ForeignKey("registrations.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), index=True, nullable=False)
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checked_in_by_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(_USER_FOREIGN_KEY), nullable=True
+    )
+
+    registration: Mapped[EventRegistration] = relationship(back_populates="ticket")
+

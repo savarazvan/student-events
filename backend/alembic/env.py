@@ -1,5 +1,4 @@
 import asyncio
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -8,17 +7,15 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# When migrations run from inside the app (startup / seed) keep the app's logging setup.
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
-database_url = os.getenv(
-    "DATABASE_URL",
-    "postgresql+asyncpg://postgres:postgrespassword@db:5432/student_events_db",
-)
-config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
-
-from app.core.database import Base
+# Same URL as the application (DATABASE_URL env var or .env, else localhost default)
+from app.core.database import DATABASE_URL, Base
 from app.models import models as _models
+
+config.set_main_option("sqlalchemy.url", DATABASE_URL.replace("%", "%%"))
 
 target_metadata = Base.metadata
 
