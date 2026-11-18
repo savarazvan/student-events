@@ -9,7 +9,10 @@ import LoadingBox from '../../components/common/LoadingBox';
 import EventForm from '../../components/events/EventForm';
 import type { EventFormData } from '../../components/events/EventForm';
 import { useAuth } from '../../context/AuthContext';
+import { ApiError } from '../../api/client';
 import { useApiError } from '../../hooks/useApiError';
+import { useFormValidation } from '../../hooks/useFormValidation';
+import { validateEventForm } from '../../utils/validation';
 import type { EventCategory, OrganizationResponse } from '../../types';
 
 const emptyForm: EventFormData = {
@@ -34,6 +37,9 @@ export default function EventCreateContainer() {
   const [orgsLoading, setOrgsLoading] = useState(isSuperAdmin);
   const { error, handleError, clearError } = useApiError();
   const navigate = useNavigate();
+  const validation = useFormValidation<keyof EventFormData>(
+    validateEventForm(form, { isNew: true }),
+  );
 
   const userOrgs = useMemo<OrganizationResponse[]>(() => {
     if (isSuperAdmin) return [];
@@ -72,13 +78,15 @@ export default function EventCreateContainer() {
 
   const handleChange = (field: keyof EventFormData, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+    validation.touch(field);
   };
 
   const toISO = (local: string) => (local ? new Date(local).toISOString() : '');
 
   const handleSubmit = async () => {
-    setLoading(true);
     clearError();
+    if (!validation.attemptSubmit()) return;
+    setLoading(true);
     try {
       const ev = await createEvent({
         title: form.title,
@@ -96,7 +104,11 @@ export default function EventCreateContainer() {
       });
       navigate(`/events/${ev.id}`);
     } catch (err) {
-      handleError(err);
+      if (err instanceof ApiError && err.status === 400 && /image/i.test(err.detail)) {
+        validation.setServerErrors({ image_url: err.detail });
+      } else if (!validation.applyServerErrors(err)) {
+        handleError(err);
+      }
     } finally {
       setLoading(false);
     }
@@ -113,6 +125,7 @@ export default function EventCreateContainer() {
         data={form}
         organizations={organizations}
         error={error}
+        fieldErrors={validation.errors}
         loading={loading}
         submitLabel="Create Event"
         onChange={handleChange}

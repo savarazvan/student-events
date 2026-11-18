@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -22,19 +23,22 @@ from app.models.models import (
 
 logger = logging.getLogger(__name__)
 INITIAL_ORGANIZATIONS = ("OSUBB", "BEST Cluj-Napoca")
+# Override in production; the defaults are public development credentials.
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@ubbcluj.ro").strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin123456!")
 
 
 async def seed_data() -> None:
     async with async_session_maker() as session:
         try:
             admin = await session.scalar(
-                select(User).where(User.email == "admin@ubbcluj.ro")
+                select(User).where(User.email == ADMIN_EMAIL)
             )
             if admin is None:
                 admin = User(
-                    email="admin@ubbcluj.ro",
+                    email=ADMIN_EMAIL,
                     full_name="Super Administrator UBB",
-                    hashed_password=get_password_hash("Admin123456!"),
+                    hashed_password=get_password_hash(ADMIN_PASSWORD),
                     global_role=GlobalRole.SUPER_ADMIN,
                     is_active=True,
                 )

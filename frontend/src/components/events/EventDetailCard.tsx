@@ -1,5 +1,6 @@
 import CalendarTodayIcon from '@mui/icons-material/CalendarToday';
 import CategoryIcon from '@mui/icons-material/Category';
+import GroupsIcon from '@mui/icons-material/Groups';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import PeopleIcon from '@mui/icons-material/People';
 import Box from '@mui/material/Box';
@@ -22,10 +23,11 @@ function fmt(iso: string): string {
 
 interface Props {
   event: EventResponse;
+  organizationName?: string;
   actions?: ReactNode;
 }
 
-export default function EventDetailCard({ event, actions }: Props) {
+export default function EventDetailCard({ event, organizationName, actions }: Props) {
   return (
     <Card>
       {event.image_url && (
@@ -46,6 +48,12 @@ export default function EventDetailCard({ event, actions }: Props) {
         <Divider sx={{ my: 2 }} />
 
         <Box display="flex" flexWrap="wrap" gap={3}>
+          {organizationName && (
+            <Box display="flex" alignItems="center" gap={0.5}>
+              <GroupsIcon color="action" />
+              <Typography variant="body2">Organized by {organizationName}</Typography>
+            </Box>
+          )}
           <Box display="flex" alignItems="center" gap={0.5}>
             <CalendarTodayIcon color="action" />
             <Typography variant="body2">

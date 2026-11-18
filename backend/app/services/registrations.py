@@ -20,6 +20,7 @@ from app.models.models import (
     Ticket,
     User,
 )
+from app.services.notifications import notify_promoted, notify_registration
 from app.services.tickets import issue_ticket, revoke_ticket
 
 EVENT_NOT_FOUND_DETAIL = "Event not found."
@@ -88,6 +89,7 @@ async def promote_waitlist(db: AsyncSession, event: Event) -> list[EventRegistra
     for registration in promoted:
         registration.status = EventRegistrationStatus.CONFIRMED
         await issue_ticket(db, registration)
+        notify_promoted(db, registration, event)
     return promoted
 
 
@@ -130,6 +132,7 @@ async def register_user(db: AsyncSession, event_id: UUID, user: User) -> EventRe
 
     if registration_status == EventRegistrationStatus.CONFIRMED:
         await issue_ticket(db, registration)
+    notify_registration(db, registration, event)
 
     await db.commit()
     await db.refresh(registration)

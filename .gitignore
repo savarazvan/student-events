@@ -6,6 +6,7 @@ __pycache__/
 venv/
 ENV/
 .env
+.env.production
 
 # Frontend / Node
 node_modules/

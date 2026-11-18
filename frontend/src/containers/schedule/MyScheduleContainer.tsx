@@ -10,6 +10,7 @@ import { getMyRegistrations } from '../../api/me';
 import EmptyState from '../../components/common/EmptyState';
 import ErrorAlert from '../../components/common/ErrorAlert';
 import LoadingBox from '../../components/common/LoadingBox';
+import MyTasksCard from '../../components/schedule/MyTasksCard';
 import RegistrationCard from '../../components/schedule/RegistrationCard';
 import { useApiError } from '../../hooks/useApiError';
 import type { MyRegistrationResponse } from '../../types';
@@ -57,6 +58,7 @@ export default function MyScheduleContainer() {
       <Typography variant="h4" gutterBottom>
         My Schedule
       </Typography>
+      <MyTasksCard onOpenEvent={(id) => navigate(`/events/${id}`)} />
       <Box display="flex" gap={2} mb={2}>
         <FormControlLabel
           control={

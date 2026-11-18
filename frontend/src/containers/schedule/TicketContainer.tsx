@@ -99,14 +99,20 @@ export default function TicketContainer() {
         )}
         <ErrorAlert message={error} onClose={clearError} />
         {qrUrl && (
-          <Box display="flex" justifyContent="center" mt={3}>
-            <img src={qrUrl} alt="QR Ticket" width={250} height={250} />
-          </Box>
+          <>
+            <Box display="flex" justifyContent="center" mt={3}>
+              <img src={qrUrl} alt="QR Ticket" width={250} height={250} />
+            </Box>
+            <Typography variant="body2" color="text.secondary" textAlign="center" mt={1}>
+              Show this QR code at the entrance. Scanning it opens your ticket page, where the
+              organizers check you in.
+            </Typography>
+          </>
         )}
         {ticket.qr_token && (
           <Box mt={2} textAlign="center">
             <Typography variant="caption" color="text.secondary" display="block">
-              QR Token:
+              Backup code (if the QR code cannot be scanned):
             </Typography>
             <Typography
               variant="body2"

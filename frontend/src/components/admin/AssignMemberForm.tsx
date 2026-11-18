@@ -4,22 +4,22 @@ import FormControl from '@mui/material/FormControl';
 import InputLabel from '@mui/material/InputLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Select from '@mui/material/Select';
-import TextField from '@mui/material/TextField';
 import type { SelectChangeEvent } from '@mui/material/Select';
 import type { FormEvent } from 'react';
 
-import type { OrgRole, OrganizationResponse } from '../../types';
+import type { AdminUserResponse, OrgRole, OrganizationResponse } from '../../types';
+import UserSearchField from './UserSearchField';
 import ErrorAlert from '../common/ErrorAlert';
 
 interface Props {
   organizations: OrganizationResponse[];
   orgId: string;
-  userId: string;
+  selectedUser: AdminUserResponse | null;
   role: OrgRole;
   error: string | null;
   loading: boolean;
   onOrgIdChange: (v: string) => void;
-  onUserIdChange: (v: string) => void;
+  onUserChange: (user: AdminUserResponse | null) => void;
   onRoleChange: (v: OrgRole) => void;
   onSubmit: () => void;
   onClearError: () => void;
@@ -28,12 +28,12 @@ interface Props {
 export default function AssignMemberForm({
   organizations,
   orgId,
-  userId,
+  selectedUser,
   role,
   error,
   loading,
   onOrgIdChange,
-  onUserIdChange,
+  onUserChange,
   onRoleChange,
   onSubmit,
   onClearError,
@@ -60,15 +60,7 @@ export default function AssignMemberForm({
           ))}
         </Select>
       </FormControl>
-      <TextField
-        margin="normal"
-        required
-        fullWidth
-        label="User ID (UUID)"
-        placeholder="e.g. 8e4ba76e-55c8-4f5b-86a6-0669d128a442"
-        value={userId}
-        onChange={(e) => onUserIdChange(e.target.value)}
-      />
+      <UserSearchField value={selectedUser} onChange={onUserChange} />
       <FormControl fullWidth margin="normal" required>
         <InputLabel>Organization Role</InputLabel>
         <Select
@@ -84,7 +76,7 @@ export default function AssignMemberForm({
       <Button
         type="submit"
         variant="contained"
-        disabled={loading || !orgId || !userId}
+        disabled={loading || !orgId || !selectedUser}
         sx={{ mt: 2 }}
       >
         {loading ? 'Assigning…' : 'Assign Member'}

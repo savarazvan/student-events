@@ -1,7 +1,7 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -109,6 +109,20 @@ async def assign_organization_member(
     await db.commit()
     await db.refresh(membership)
     return membership
+
+
+@router.get("/users", response_model=list[AdminUserResponse])
+async def search_users(
+    search: str | None = Query(default=None, max_length=200, description="Name or e-mail"),
+    limit: int = Query(default=20, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+) -> list[User]:
+    """Find accounts by name or e-mail (used instead of typing user UUIDs)."""
+    query = select(User).order_by(User.full_name, User.email).limit(limit)
+    if search and search.strip():
+        pattern = f"%{search.strip()}%"
+        query = query.where(or_(User.full_name.ilike(pattern), User.email.ilike(pattern)))
+    return list((await db.scalars(query)).all())
 
 
 @router.patch(

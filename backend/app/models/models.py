@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, Uuid, UniqueConstraint, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Enum as SqlEnum, ForeignKey, Integer, String, Text, Uuid, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -48,6 +48,24 @@ class EventRegistrationStatus(str, Enum):
     CONFIRMED = "CONFIRMED"
     WAITLIST = "WAITLIST"
     CANCELLED = "CANCELLED"
+
+
+class EventTaskStatus(str, Enum):
+    TODO = "TODO"
+    IN_PROGRESS = "IN_PROGRESS"
+    DONE = "DONE"
+
+
+class NotificationType(str, Enum):
+    REGISTRATION_CONFIRMED = "REGISTRATION_CONFIRMED"
+    REGISTRATION_WAITLISTED = "REGISTRATION_WAITLISTED"
+    WAITLIST_PROMOTED = "WAITLIST_PROMOTED"
+    EVENT_UPDATED = "EVENT_UPDATED"
+    EVENT_CANCELLED = "EVENT_CANCELLED"
+    EVENT_ANNOUNCEMENT = "EVENT_ANNOUNCEMENT"
+    EVENT_REMINDER = "EVENT_REMINDER"
+    FEEDBACK_REQUESTED = "FEEDBACK_REQUESTED"
+    TASK_ASSIGNED = "TASK_ASSIGNED"
 
 
 def utcnow() -> datetime:
@@ -196,4 +214,83 @@ class Ticket(Base):
     )
 
     registration: Mapped[EventRegistration] = relationship(back_populates="ticket")
+
+
+class Notification(Base):
+    """In-app notification; also the outbox for e-mail delivery (``emailed_at``).
+
+    ``type`` is stored as a plain string (validated by ``NotificationType``) so new
+    notification kinds do not need a PostgreSQL enum migration. ``dedup_key``
+    makes scheduled notifications such as reminders idempotent.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedup_key", name="uq_notifications_user_dedup"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), index=True, nullable=False)
+    event_id: Mapped[UUID | None] = mapped_column(ForeignKey("events.id"), index=True, nullable=True)
+    type: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    dedup_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EventAnnouncement(Base):
+    """Message an organizer sends to everyone registered for an event."""
+
+    __tablename__ = "event_announcements"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    author_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class EventFeedback(Base):
+    """Post-event rating left by an attendee who checked in."""
+
+    __tablename__ = "event_feedback"
+    __table_args__ = (
+        UniqueConstraint("event_id", "user_id", name="uq_event_feedback_event_user"),
+        CheckConstraint("rating BETWEEN 1 AND 5", name="ck_event_feedback_rating"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), nullable=False)
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
+class EventTask(Base):
+    """A responsibility within an event's organizing team (e.g. check-in desk)."""
+
+    __tablename__ = "event_tasks"
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id"), index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    assignee_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(_USER_FOREIGN_KEY), index=True, nullable=True
+    )
+    status: Mapped[EventTaskStatus] = mapped_column(
+        SqlEnum(EventTaskStatus, name="event_task_status"),
+        default=EventTaskStatus.TODO,
+        nullable=False,
+    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by_id: Mapped[UUID] = mapped_column(ForeignKey(_USER_FOREIGN_KEY), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 

@@ -1,3 +1,4 @@
+import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import QrCodeScannerIcon from '@mui/icons-material/QrCodeScanner';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
@@ -14,6 +15,7 @@ interface Props {
   disabled?: boolean;
   onTokenChange: (v: string) => void;
   onSubmit: () => void;
+  onOpenCamera: () => void;
 }
 
 export default function QrCheckInForm({
@@ -22,6 +24,7 @@ export default function QrCheckInForm({
   disabled,
   onTokenChange,
   onSubmit,
+  onOpenCamera,
 }: Props) {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -33,7 +36,19 @@ export default function QrCheckInForm({
     <Card sx={{ mb: 2 }}>
       <CardContent>
         <Typography variant="h6" gutterBottom>
-          QR Token Check-In
+          QR Check-In
+        </Typography>
+        <Button
+          variant="contained"
+          startIcon={<PhotoCameraIcon />}
+          disabled={disabled}
+          onClick={onOpenCamera}
+          sx={{ mb: 2 }}
+        >
+          Scan with camera
+        </Button>
+        <Typography variant="body2" color="text.secondary" gutterBottom>
+          Or paste the token printed under the attendee&apos;s QR code (or from a USB scanner):
         </Typography>
         <Box
           component="form"

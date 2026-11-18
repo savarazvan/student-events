@@ -45,7 +45,8 @@ def run_migrations() -> None:
     config = _alembic_config()
     tables = asyncio.run(_existing_tables())
     if "alembic_version" not in tables and "users" in tables:
-        revision = "head" if "tickets" in tables else BASELINE_REVISION
+        # Schemas built by create_all before migrations existed stopped at 0002 (tickets).
+        revision = "0002" if "tickets" in tables else BASELINE_REVISION
         logger.info("Existing schema without migration history; stamping %s.", revision)
         command.stamp(config, revision)
     command.upgrade(config, "head")

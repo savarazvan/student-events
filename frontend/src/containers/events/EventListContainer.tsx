@@ -14,6 +14,7 @@ import EventFilters from '../../components/events/EventFilters';
 import EventGrid from '../../components/events/EventGrid';
 import { useAuth } from '../../context/AuthContext';
 import { useApiError } from '../../hooks/useApiError';
+import { useOrganizations } from '../../hooks/useOrganizations';
 import type { EventCategory, EventResponse, EventStatus } from '../../types';
 
 export default function EventListContainer() {
@@ -30,6 +31,7 @@ export default function EventListContainer() {
   const { error, handleError, clearError } = useApiError();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { organizations } = useOrganizations();
 
   const pageSize = 12;
   const canCreate =
@@ -50,7 +52,7 @@ export default function EventListContainer() {
       search: search || undefined,
       category: (category as EventCategory) || undefined,
       status: (status as EventStatus) || undefined,
-      organization_id: organizationId.trim() || undefined,
+      organization_id: organizationId || undefined,
       starts_after: toISO(startsAfter),
       starts_before: toISO(startsBefore),
       page,
@@ -149,6 +151,7 @@ export default function EventListContainer() {
         category={category}
         status={status}
         organizationId={organizationId}
+        organizations={organizations}
         startsAfter={startsAfter}
         startsBefore={startsBefore}
         onSearchChange={handleSearchChange}
